@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -186,3 +186,13 @@ data/interim/
 
 # Symlink to course PDFs, notes, etc.
 notes
+
+# Raw Lichess dump (~30 GB) -- download it yourself, never commit it
+dataset/
+
+# Node / web app
+node_modules/
+web/dist/
+
+# Course material (videos, example report, report template) -- kept locally only
+docs/course-material/
