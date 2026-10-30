@@ -3,6 +3,8 @@ import { SegmentedControl } from '@mantine/core'
 import { VegaEmbed } from 'react-vega'
 import type { VisualizationSpec } from 'vega-embed'
 import { useData } from '../lib/data'
+import { ACCENT, CONTEXT, DIMMED, INK, bracketLabelExpr } from '../lib/chess'
+import { useEloFilter } from '../lib/eloRange'
 import { TabSection } from '../lib/TabSection'
 
 type Row = { elo_bracket: number; moves: number; termination: string; games: number }
@@ -12,11 +14,14 @@ const termination = {
   field: 'termination',
   type: 'nominal',
   title: null,
-  scale: { domain: ['Time forfeit', 'Normal'], range: ['#2a78d6', '#c9c6bd'] },
+  scale: { domain: ['Time forfeit', 'Normal'], range: [ACCENT, CONTEXT] },
   legend: { orient: 'top', labelExpr: "datum.value === 'Normal' ? 'Checkmate, resignation, draw' : datum.value" },
 } as const
 
-const movesLabel = "datum.moves === 100 ? '100+' : datum.moves + '–' + (datum.moves + 4)"
+// The last bin is open-ended (every game of 100+ moves), so it isn't as wide as the others.
+// It gets a dashed outline and a gap before it, so its count isn't read as one more 5-move bin.
+const OPEN_BIN = 100
+const movesLabel = `datum.moves === ${OPEN_BIN} ? '100 or more (all longer games)' : datum.moves + '–' + (datum.moves + 4)`
 
 const makeSpec = (normalize: boolean): VisualizationSpec => ({
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
@@ -31,13 +36,19 @@ const makeSpec = (normalize: boolean): VisualizationSpec => ({
         { calculate: "datum.termination === 'Time forfeit' ? datum.games : 0", as: 'flagged' },
         { aggregate: [{ op: 'sum', field: 'games', as: 'total' }, { op: 'sum', field: 'flagged', as: 'flagged' }], groupby: ['elo_bracket'] },
         { calculate: 'datum.flagged / datum.total', as: 'share' },
-        { calculate: "datum.elo_bracket + '–' + (datum.elo_bracket + 199)", as: 'bracket_label' },
+        { calculate: bracketLabelExpr('datum.elo_bracket'), as: 'bracket_label' },
       ],
-      mark: { type: 'bar', color: '#2a78d6', cornerRadiusEnd: 4, cursor: 'pointer' },
+      mark: { type: 'bar', color: ACCENT, cornerRadiusEnd: 4, cursor: 'pointer' },
       encoding: {
-        y: { field: 'elo_bracket', type: 'ordinal', title: 'Average Elo (bracket start)', sort: 'descending' },
+        y: {
+          field: 'elo_bracket',
+          type: 'ordinal',
+          title: 'Average Elo',
+          sort: 'descending',
+          axis: { labelExpr: bracketLabelExpr('datum.value', false) },
+        },
         x: { field: 'share', type: 'quantitative', title: 'Share of games ending on time', axis: { format: '%' } },
-        opacity: { condition: { param: 'pick', value: 1 }, value: 0.3 },
+        opacity: { condition: { param: 'pick', value: 1 }, value: DIMMED },
         tooltip: [
           { field: 'bracket_label', title: 'Elo bracket' },
           { field: 'share', title: 'Ended on time', format: '.1%' },
@@ -57,14 +68,23 @@ const makeSpec = (normalize: boolean): VisualizationSpec => ({
         { calculate: 'datum.games / datum.bin_games', as: 'share' },
         { calculate: movesLabel, as: 'moves_label' },
       ],
-      mark: { type: 'bar', stroke: 'white', strokeWidth: 1 },
+      mark: { type: 'bar', strokeWidth: 1 },
       encoding: {
         x: {
           field: 'moves',
           type: 'ordinal',
-          title: 'Game length (full moves)',
-          axis: { labelExpr: "datum.value === 100 ? '100+' : datum.value", labelAngle: 0, labelOverlap: true },
+          title: 'Game length (full moves; last bar: 100 or more)',
+          // A blank slot before the open bin separates it from the regular ones.
+          scale: { domain: [...Array.from({ length: OPEN_BIN / 5 }, (_, i) => i * 5), -1, OPEN_BIN] },
+          axis: {
+            labelExpr: `datum.value === ${OPEN_BIN} ? '100+' : datum.value < 0 ? '' : datum.value`,
+            labelAngle: 0,
+            labelOverlap: true,
+            ticks: false,
+          },
         },
+        stroke: { condition: { test: `datum.moves === ${OPEN_BIN}`, value: INK }, value: 'white' },
+        strokeDash: { condition: { test: `datum.moves === ${OPEN_BIN}`, value: [3, 2] }, value: [1, 0] },
         y: {
           field: 'games',
           type: 'quantitative',
@@ -88,10 +108,15 @@ const makeSpec = (normalize: boolean): VisualizationSpec => ({
 export default function TimeForfeits() {
   const rows = useData<Row[]>('time_forfeits.json')
   const [scale, setScale] = useState('count')
+  const { inRange } = useEloFilter()
 
   const fullSpec = useMemo(
-    () => ({ ...makeSpec(scale === 'share'), data: { values: rows ?? [] } }) as VisualizationSpec,
-    [rows, scale],
+    () =>
+      ({
+        ...makeSpec(scale === 'share'),
+        data: { values: (rows ?? []).filter((r) => inRange(r.elo_bracket)) },
+      }) as VisualizationSpec,
+    [rows, scale, inRange],
   )
 
   return (

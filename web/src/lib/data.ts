@@ -11,7 +11,9 @@ const fetchJson = (file: string) =>
  * Cached by SWR, so several tabs can share a file without refetching.
  *
  *   const rows = useData<MyRow[]>('results_by_elo.json')
+ *
+ * Pass null to not load anything yet (for big files only needed after a user choice).
  */
-export function useData<T>(file: string): T | undefined {
+export function useData<T>(file: string | null): T | undefined {
   return useSWR<T>(file, fetchJson).data
 }

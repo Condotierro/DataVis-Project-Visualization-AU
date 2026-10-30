@@ -24,9 +24,10 @@ from extract import time_class
 from openings import opening_name
 
 ELO_BIN = 200
-TOP_OPENINGS = 15
+TOP_OPENINGS = 40  # enough points for the openings scatterplot
 GAP_BIN = 25  # rating gap (white - black) bin width
 MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
+BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap
 MOVES_BIN = 5  # game length bin width, in full moves
 MAX_MOVES = 100  # longer games go in the last bin, labeled "100+" in the app
 
@@ -99,15 +100,8 @@ def results_by_elo(games: pl.LazyFrame) -> pl.DataFrame:
 
 
 def openings_by_elo(games: pl.LazyFrame) -> pl.DataFrame:
-    top = (
-        games.group_by("opening_family")
-        .len()
-        .sort("len", descending=True)
-        .head(TOP_OPENINGS)
-        .select("opening_family")
-    )
     return (
-        games.join(top, on="opening_family")
+        games.join(top_openings(games, TOP_OPENINGS), on="opening_family")
         .group_by("opening_family", "elo_bracket")
         .agg(result_counts())
         .sort("opening_family", "elo_bracket")
@@ -146,15 +140,26 @@ def time_forfeits(games: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def square_heatmap(games: pl.LazyFrame) -> pl.DataFrame:
-    """Destination square of every move, split by side and piece.
+SQUARES = [f"{f}{r}" for r in "12345678" for f in "abcdefgh"]  # a1, b1, ..., h8
+
+
+def top_openings(games: pl.LazyFrame, n: int) -> pl.LazyFrame:
+    return games.group_by("opening_family").len().sort("len", descending=True).head(n).select("opening_family")
+
+
+def square_heatmap(games: pl.LazyFrame, by: str | None = None) -> pl.DataFrame:
+    """Destination square of every move, split by side, piece and Elo bracket.
+
+    One row per (side, piece, elo_bracket) with a 64-long `counts` list in SQUARES
+    order; one row per square would be ~10x larger. With `by`, that column is one
+    more key (e.g. opening_family, for games already narrowed to the top openings).
 
     Parsed straight from SAN (no board replay needed): the destination is the
     last square in the token; castling is mapped to the king's target square.
     """
     moves = (
         games.with_row_index("gid")
-        .select("gid", "time_class", san=pl.col("moves").str.split(" "))
+        .select("gid", "elo_bracket", *([by] if by else []), san=pl.col("moves").str.split(" "))
         .explode("san")
         .filter(pl.col("san").is_not_null() & (pl.col("san") != ""))
         .with_columns(ply=pl.int_range(pl.len()).over("gid"))
@@ -175,12 +180,22 @@ def square_heatmap(games: pl.LazyFrame) -> pl.DataFrame:
             .otherwise(pl.col("square"))
         )
     )
-    return (
+    key = [*([by] if by else []), "side", "piece", "elo_bracket"]
+    counts = (
         moves.filter(pl.col("square").is_not_null())
-        .group_by("side", "piece", "square")
+        .group_by(*key, "square")
         .agg(count=pl.len())
-        .sort("side", "piece", "square")
         .collect()
+    )
+    squares = pl.DataFrame({"square": SQUARES, "idx": range(len(SQUARES))})
+    return (
+        counts.select(key).unique()
+        .join(squares, how="cross")
+        .join(counts, on=[*key, "square"], how="left")
+        .sort("idx")
+        .group_by(key, maintain_order=True)
+        .agg(counts=pl.col("count").fill_null(0))
+        .sort(key)
     )
 
 
@@ -200,6 +215,11 @@ def main() -> None:
     write_json(results_by_elo(games), args.out / "results_by_elo.json")
     write_json(openings_by_elo(games), args.out / "openings_by_elo.json")
     write_json(square_heatmap(games), args.out / "square_heatmap.json")
+    # The board for single openings, picked in the app; "All openings" uses the file above.
+    write_json(
+        square_heatmap(games.join(top_openings(games, BOARD_OPENINGS), on="opening_family"), by="opening_family"),
+        args.out / "square_heatmap_openings.json",
+    )
     write_json(rating_gap(games), args.out / "rating_gap.json")
     write_json(time_forfeits(games), args.out / "time_forfeits.json")
 
@@ -209,7 +229,9 @@ def main() -> None:
         last_date=pl.col("utc_date").max(),
         time_controls=pl.col("time_control").unique().sort().implode(),
     ).collect()
-    (args.out / "meta.json").write_text(json.dumps(meta.to_dicts()[0]))
+    # The app lists these before (and without) loading square_heatmap_openings.json.
+    board_openings = top_openings(games, BOARD_OPENINGS).collect()["opening_family"].to_list()
+    (args.out / "meta.json").write_text(json.dumps({**meta.to_dicts()[0], "board_openings": board_openings}))
     print(f"wrote {args.out / 'meta.json'}")
 
 
