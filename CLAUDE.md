@@ -19,6 +19,8 @@ dataset/*.pgn.zst  (raw Lichess dump, ~30 GB, gitignored)
   → web/ (React)               → GitHub Pages
 ```
 
+The app currently runs on `Sampling_100k.zip` at the repo root, which is the group's sample: 100k rated 3+0 blitz games spread over all of September, as a CSV. `aggregate.py` reads it directly, zipped or not, so the extract step is skipped. The CSV has no `Opening` header, so `preprocessing/openings.py` names each opening from its moves. It uses Lichess's own opening table (`preprocessing/openings/*.tsv`, CC0) and matches by position, as Lichess does. On games that do have the header it agrees on 98.6% of exact names and 99.7% of families.
+
 The JSON in `web/public/data/` is committed on purpose. CI builds the site from it and never sees the raw dump. After changing `aggregate.py`, rerun it and commit the regenerated JSON. Keep these files small, in the tens of KB.
 
 `data/raw/dev_sample_100k.pgn.zst` holds the first 100k games of the dump, all from Sept 1. Use it for fast iteration.
@@ -29,7 +31,8 @@ Preprocessing (Python ≥3.12, managed by uv; run from `preprocessing/`):
 
 ```bash
 uv run extract.py ../data/raw/dev_sample_100k.pgn.zst          # or ../dataset/lichess_db_standard_rated_2026-09.pgn.zst [--limit N] [--every K]
-uv run aggregate.py ../data/interim/games.parquet              # writes ../web/public/data/*.json
+uv run aggregate.py ../Sampling_100k.zip                       # writes ../web/public/data/*.json (~20 s)
+uv run aggregate.py ../data/interim/games.parquet              # same, from extract.py output
 ```
 
 Web (run from `web/`):

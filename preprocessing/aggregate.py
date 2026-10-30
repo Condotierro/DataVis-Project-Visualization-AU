@@ -1,20 +1,71 @@
-"""Turn the extracted games table into small JSON files for the web app.
+"""Turn a games table into small JSON files for the web app.
 
 Each output file feeds one (or more) tabs in web/src/tabs/. Keep them small --
 they're committed to git and shipped to GitHub Pages as-is.
 
+The input is either the Parquet written by extract.py or the group's sampled
+CSV (Sampling_100k.zip at the repo root, or the unzipped .csv).
+
 Usage:
+    uv run aggregate.py ../Sampling_100k.zip --out ../web/public/data
     uv run aggregate.py ../data/interim/games.parquet --out ../web/public/data
 """
 
 import argparse
+import io
 import json
+import zipfile
+from multiprocessing import Pool
 from pathlib import Path
 
 import polars as pl
 
+from extract import time_class
+from openings import opening_name
+
 ELO_BIN = 200
 TOP_OPENINGS = 15
+GAP_BIN = 25  # rating gap (white - black) bin width
+MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
+MOVES_BIN = 5  # game length bin width, in full moves
+MAX_MOVES = 100  # longer games go in the last bin, labeled "100+" in the app
+
+
+def read_sample_csv(path: Path) -> pl.DataFrame:
+    """Read the sampled CSV (optionally zipped) and rename it to extract.py's schema.
+
+    The CSV has no Opening header, so the opening is named from the moves.
+    """
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path) as zf:
+            (name,) = [n for n in zf.namelist() if n.endswith(".csv")]
+            raw = pl.read_csv(io.BytesIO(zf.read(name)))
+    else:
+        raw = pl.read_csv(path)
+
+    with Pool() as pool:
+        openings = pool.map(opening_name, raw["Moves"], chunksize=1000)
+
+    return raw.select(
+        game_id=pl.col("GameID"),
+        time_class=pl.col("TimeControl").map_elements(time_class, return_dtype=pl.String),
+        utc_date=pl.col("UTCDate"),
+        white_elo=pl.col("WhiteElo").cast(pl.Int16),
+        black_elo=pl.col("BlackElo").cast(pl.Int16),
+        result=pl.col("Result"),
+        eco=pl.col("ECO"),
+        opening=pl.Series(openings, dtype=pl.String),
+        time_control=pl.col("TimeControl"),
+        termination=pl.col("Termination"),
+        num_plies=pl.col("Moves").str.count_matches(r"\S+").cast(pl.Int16),
+        moves=pl.col("Moves"),
+    )
+
+
+def load_games(path: Path) -> pl.LazyFrame:
+    if path.suffix == ".parquet":
+        return pl.scan_parquet(path)
+    return read_sample_csv(path).lazy()
 
 
 def with_common_columns(games: pl.LazyFrame) -> pl.LazyFrame:
@@ -64,6 +115,37 @@ def openings_by_elo(games: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
+def rating_gap(games: pl.LazyFrame) -> pl.DataFrame:
+    """Results by rating gap, to compare against the score the Elo formula predicts."""
+    gap = pl.col("white_elo").cast(pl.Int32) - pl.col("black_elo")
+    return (
+        games.filter(gap.abs() < MAX_GAP + GAP_BIN // 2)
+        # Bins centered on multiples of GAP_BIN, so a gap of 0 is its own bin.
+        .with_columns(gap=((gap + GAP_BIN // 2) // GAP_BIN * GAP_BIN))
+        .group_by("gap", "elo_bracket")
+        .agg(result_counts())
+        .sort("gap", "elo_bracket")
+        .collect()
+    )
+
+
+def time_forfeits(games: pl.LazyFrame) -> pl.DataFrame:
+    """How games end, by game length and Elo bracket."""
+    full_moves = (pl.col("num_plies") + 1) // 2
+    return (
+        games.with_columns(
+            moves=(full_moves // MOVES_BIN * MOVES_BIN).clip(0, MAX_MOVES),
+            # Lichess's "Insufficient material" termination is a flag fall against a
+            # side that can't mate (scored a draw), so it's a time forfeit too.
+            termination=pl.col("termination").replace("Insufficient material", "Time forfeit"),
+        )
+        .group_by("elo_bracket", "moves", "termination")
+        .agg(games=pl.len())
+        .sort("elo_bracket", "moves", "termination")
+        .collect()
+    )
+
+
 def square_heatmap(games: pl.LazyFrame) -> pl.DataFrame:
     """Destination square of every move, split by side and piece.
 
@@ -109,20 +191,23 @@ def write_json(df: pl.DataFrame, path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("games", type=Path, help="Parquet file written by extract.py")
+    ap.add_argument("games", type=Path, help="Parquet from extract.py, or the sampled .csv/.zip")
     ap.add_argument("--out", type=Path, default=Path("../web/public/data"))
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    games = with_common_columns(pl.scan_parquet(args.games))
+    games = with_common_columns(load_games(args.games)).cache()
     write_json(results_by_elo(games), args.out / "results_by_elo.json")
     write_json(openings_by_elo(games), args.out / "openings_by_elo.json")
     write_json(square_heatmap(games), args.out / "square_heatmap.json")
+    write_json(rating_gap(games), args.out / "rating_gap.json")
+    write_json(time_forfeits(games), args.out / "time_forfeits.json")
 
     meta = games.select(
         games=pl.len(),
         first_date=pl.col("utc_date").min(),
         last_date=pl.col("utc_date").max(),
+        time_controls=pl.col("time_control").unique().sort().implode(),
     ).collect()
     (args.out / "meta.json").write_text(json.dumps(meta.to_dicts()[0]))
     print(f"wrote {args.out / 'meta.json'}")

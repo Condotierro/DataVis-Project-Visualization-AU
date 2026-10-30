@@ -8,7 +8,7 @@ import { TabSection } from '../lib/TabSection'
 
 type Row = { elo_bracket: number; time_class: string; games: number; white: number; draw: number; black: number }
 
-const TIME_CLASSES = ['all', 'bullet', 'blitz', 'rapid', 'classical']
+const TIME_CLASSES = ['bullet', 'blitz', 'rapid', 'classical']
 
 const spec: VisualizationSpec = {
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
@@ -41,11 +41,18 @@ export default function ResultsByElo() {
     return { ...spec, data: { values } } as VisualizationSpec
   }, [rows, timeClass])
 
+  // Only offer the time classes the current sample actually contains.
+  const present = TIME_CLASSES.filter((tc) => rows?.some((r) => r.time_class === tc))
+
   return (
     <TabSection
       title="Who wins, by rating?"
       description="Share of white wins, draws and black wins for each Elo bracket. Hover a segment for counts."
-      controls={<SegmentedControl data={TIME_CLASSES} value={timeClass} onChange={setTimeClass} />}
+      controls={
+        present.length > 1 && (
+          <SegmentedControl data={['all', ...present]} value={timeClass} onChange={setTimeClass} />
+        )
+      }
       loading={!rows}
     >
       <VegaEmbed spec={fullSpec} style={{ width: '100%' }} />
