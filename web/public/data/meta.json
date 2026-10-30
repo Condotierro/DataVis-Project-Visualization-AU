@@ -1,1 +1,1 @@
-{"games": 100000, "first_date": "2026.09.01", "last_date": "2026.09.30", "time_controls": ["180+0"]}
+{"games": 100000, "first_date": "2026.09.01", "last_date": "2026.09.30", "time_controls": ["180+0"], "board_openings": ["Sicilian Defense", "Queen's Pawn Game", "French Defense", "Scandinavian Defense", "Caro-Kann Defense", "Italian Game", "English Opening", "King's Pawn Game", "Queen's Gambit Declined", "Modern Defense"]}

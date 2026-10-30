@@ -1,7 +1,30 @@
-// Shared encodings so every tab colors results the same way.
-// White/black wins use the piece colors themselves; draws sit in between.
+// Shared encodings so every tab colors things the same way.
+
+// One accent with one meaning across all tabs: the observed data a chart is about
+// (actual score, time forfeits, openings). Everything else is grey: CONTEXT for the
+// data it's read against, INK for helper lines (predictions, means), drawn dashed.
+// Selections dim what's left out instead of adding a hue.
+export const ACCENT = '#2a78d6'
+export const CONTEXT = '#c9c6bd'
+export const INK = '#5f5d57'
+export const DIMMED = 0.25
+
+// White/black wins use the piece colors themselves; draws sit in between. The result
+// is ordinal (score 1 / ½ / 0), so a monotone lightness ramp fits it.
 export const RESULT_DOMAIN = ['White wins', 'Draw', 'Black wins']
 export const RESULT_COLORS = ['#e9e4d8', '#9a9890', '#2b2a28']
+// "White wins" is ~1.3:1 against the white page, so an INK outline (~6.5:1) keeps
+// the segment from reading as background.
+export const RESULT_MARK = { type: 'bar', stroke: INK, strokeWidth: 0.75 } as const
+
+// Elo brackets are 200 wide; the ends are clipped in aggregate.py (below 800 lands in 600).
+export const bracketLabel = (b: number) => (b <= 600 ? '<800' : b >= 2800 ? '2800+' : `${b}–${b + 199}`)
+/** bracketLabel() as a Vega expression on `field` (e.g. 'datum.value' for axis labels). */
+export const bracketLabelExpr = (field: string, full = true) =>
+  `${field} <= 600 ? '<800' : ${field} >= 2800 ? '2800+' : ${full ? `${field} + '–' + (${field} + 199)` : `${field} + ''`}`
+
+// Groups with fewer games are too noisy to plot.
+export const MIN_GAMES = 30
 
 export const resultColor = {
   field: 'result',
@@ -38,4 +61,11 @@ export function toResultRows<T extends ResultCounts>(rows: T[]) {
       ] as const
     ).map(([result, count], order) => ({ ...r, result, count, order, share: count / r.games })),
   )
+}
+
+/** White's score (win = 1, draw = ½) with a normal-approximation 95% interval. */
+export function scoreWithCI(r: ResultCounts) {
+  const score = (r.white + r.draw / 2) / r.games
+  const half = 1.96 * Math.sqrt((score * (1 - score)) / r.games)
+  return { score, lo: score - half, hi: score + half }
 }
