@@ -71,7 +71,8 @@ def time_class(time_control: str) -> str:
 def parse_moves(movetext: str) -> list[str]:
     text = COMMENT_RE.sub(" ", movetext)
     text = MOVE_NUMBER_RE.sub(" ", text)
-    return [tok for tok in text.split() if tok not in RESULTS]
+    # Lichess appends ?, ?!, !? ... to moves in games with computer analysis.
+    return [tok.rstrip("?!") for tok in text.split() if tok not in RESULTS]
 
 
 def to_row(headers: dict[str, str], movetext: str) -> dict | None:

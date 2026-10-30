@@ -3,7 +3,7 @@ import { useHash } from '@mantine/hooks'
 import { tabs } from './tabs'
 import { useData } from './lib/data'
 
-type Meta = { games: number; first_date: string; last_date: string }
+type Meta = { games: number; first_date: string; last_date: string; time_controls: string[] }
 
 export default function App() {
   // The active tab lives in the URL hash (e.g. .../#openings) so tabs can be linked directly.
@@ -17,7 +17,8 @@ export default function App() {
         <Title order={1}>ChessViz</Title>
         {meta && (
           <Text c="dimmed" size="sm">
-            {meta.games.toLocaleString()} Lichess rated games · {meta.first_date} – {meta.last_date}
+            {meta.games.toLocaleString()} Lichess rated games · {meta.first_date} – {meta.last_date} · time control{' '}
+            {meta.time_controls.join(', ')}
           </Text>
         )}
       </Group>
