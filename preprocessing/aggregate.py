@@ -25,6 +25,10 @@ from openings import opening_name
 
 ELO_BIN = 200
 TOP_OPENINGS = 15
+GAP_BIN = 25  # rating gap (white - black) bin width
+MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
+MOVES_BIN = 5  # game length bin width, in full moves
+MAX_MOVES = 100  # longer games go in the last bin, labeled "100+" in the app
 
 
 def read_sample_csv(path: Path) -> pl.DataFrame:
@@ -111,6 +115,37 @@ def openings_by_elo(games: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
+def rating_gap(games: pl.LazyFrame) -> pl.DataFrame:
+    """Results by rating gap, to compare against the score the Elo formula predicts."""
+    gap = pl.col("white_elo").cast(pl.Int32) - pl.col("black_elo")
+    return (
+        games.filter(gap.abs() < MAX_GAP + GAP_BIN // 2)
+        # Bins centered on multiples of GAP_BIN, so a gap of 0 is its own bin.
+        .with_columns(gap=((gap + GAP_BIN // 2) // GAP_BIN * GAP_BIN))
+        .group_by("gap", "elo_bracket")
+        .agg(result_counts())
+        .sort("gap", "elo_bracket")
+        .collect()
+    )
+
+
+def time_forfeits(games: pl.LazyFrame) -> pl.DataFrame:
+    """How games end, by game length and Elo bracket."""
+    full_moves = (pl.col("num_plies") + 1) // 2
+    return (
+        games.with_columns(
+            moves=(full_moves // MOVES_BIN * MOVES_BIN).clip(0, MAX_MOVES),
+            # Lichess's "Insufficient material" termination is a flag fall against a
+            # side that can't mate (scored a draw), so it's a time forfeit too.
+            termination=pl.col("termination").replace("Insufficient material", "Time forfeit"),
+        )
+        .group_by("elo_bracket", "moves", "termination")
+        .agg(games=pl.len())
+        .sort("elo_bracket", "moves", "termination")
+        .collect()
+    )
+
+
 def square_heatmap(games: pl.LazyFrame) -> pl.DataFrame:
     """Destination square of every move, split by side and piece.
 
@@ -165,6 +200,8 @@ def main() -> None:
     write_json(results_by_elo(games), args.out / "results_by_elo.json")
     write_json(openings_by_elo(games), args.out / "openings_by_elo.json")
     write_json(square_heatmap(games), args.out / "square_heatmap.json")
+    write_json(rating_gap(games), args.out / "rating_gap.json")
+    write_json(time_forfeits(games), args.out / "time_forfeits.json")
 
     meta = games.select(
         games=pl.len(),
