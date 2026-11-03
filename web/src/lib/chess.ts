@@ -25,6 +25,8 @@ export const bracketLabelExpr = (field: string, full = true) =>
 
 // Groups with fewer games are too noisy to plot.
 export const MIN_GAMES = 30
+// Same idea for the share of a whole group (2800+ has only 54 games).
+export const MIN_BRACKET_GAMES = 100
 
 export const resultColor = {
   field: 'result',
