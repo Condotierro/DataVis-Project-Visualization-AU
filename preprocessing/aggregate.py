@@ -123,19 +123,32 @@ def rating_gap(games: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def time_forfeits(games: pl.LazyFrame) -> pl.DataFrame:
-    """How games end, by game length and Elo bracket."""
+def game_endings(games: pl.LazyFrame) -> pl.DataFrame:
+    """How games end, by game length and Elo bracket.
+
+    The dump's "Normal" termination covers mates, resignations and draws, so they are
+    told apart here: a decisive game that doesn't end on "#" was resigned.
+    """
     full_moves = (pl.col("num_plies") + 1) // 2
     return (
-        games.with_columns(
-            moves=(full_moves // MOVES_BIN * MOVES_BIN).clip(0, MAX_MOVES),
+        # Dropped: the full dump's few aborted or rule-breaking games ("Abandoned", ...).
+        games.filter(pl.col("termination").is_in(["Normal", "Time forfeit", "Insufficient material"]))
+        .with_columns(
+            moves_bin=(full_moves // MOVES_BIN * MOVES_BIN).clip(0, MAX_MOVES),
             # Lichess's "Insufficient material" termination is a flag fall against a
             # side that can't mate (scored a draw), so it's a time forfeit too.
-            termination=pl.col("termination").replace("Insufficient material", "Time forfeit"),
+            ending=pl.when(pl.col("termination") != "Normal")
+            .then(pl.lit("Time forfeit"))
+            .when(pl.col("draw"))
+            .then(pl.lit("Draw"))
+            .when(pl.col("moves").str.strip_chars().str.ends_with("#"))
+            .then(pl.lit("Checkmate"))
+            .otherwise(pl.lit("Resignation")),
         )
-        .group_by("elo_bracket", "moves", "termination")
+        .group_by("elo_bracket", "moves_bin", "ending")
         .agg(games=pl.len())
-        .sort("elo_bracket", "moves", "termination")
+        .rename({"moves_bin": "moves"})
+        .sort("elo_bracket", "moves", "ending")
         .collect()
     )
 
@@ -147,19 +160,15 @@ def top_openings(games: pl.LazyFrame, n: int) -> pl.LazyFrame:
     return games.group_by("opening_family").len().sort("len", descending=True).head(n).select("opening_family")
 
 
-def square_heatmap(games: pl.LazyFrame, by: str | None = None) -> pl.DataFrame:
-    """Destination square of every move, split by side, piece and Elo bracket.
+def parsed_moves(games: pl.LazyFrame, *extra: str) -> pl.LazyFrame:
+    """One row per move, parsed straight from SAN (no board replay needed).
 
-    One row per (side, piece, elo_bracket) with a 64-long `counts` list in SQUARES
-    order; one row per square would be ~10x larger. With `by`, that column is one
-    more key (e.g. opening_family, for games already narrowed to the top openings).
-
-    Parsed straight from SAN (no board replay needed): the destination is the
-    last square in the token; castling is mapped to the king's target square.
+    The destination is the last square in the token; castling is mapped to the king's
+    target square. `extra` names game columns to carry along.
     """
-    moves = (
+    return (
         games.with_row_index("gid")
-        .select("gid", "elo_bracket", *([by] if by else []), san=pl.col("moves").str.split(" "))
+        .select("gid", "elo_bracket", *extra, san=pl.col("moves").str.split(" "))
         .explode("san")
         .filter(pl.col("san").is_not_null() & (pl.col("san") != ""))
         .with_columns(ply=pl.int_range(pl.len()).over("gid"))
@@ -179,14 +188,15 @@ def square_heatmap(games: pl.LazyFrame, by: str | None = None) -> pl.DataFrame:
             .then(pl.when(pl.col("side") == "white").then(pl.lit("g1")).otherwise(pl.lit("g8")))
             .otherwise(pl.col("square"))
         )
+        .filter(pl.col("square").is_not_null())
     )
-    key = [*([by] if by else []), "side", "piece", "elo_bracket"]
-    counts = (
-        moves.filter(pl.col("square").is_not_null())
-        .group_by(*key, "square")
-        .agg(count=pl.len())
-        .collect()
-    )
+
+
+def square_rows(counts: pl.DataFrame, key: list[str]) -> pl.DataFrame:
+    """Turn (key, square, count) rows into one row per key with a 64-long `counts` list.
+
+    The list is in SQUARES order; one row per square would be ~10x larger.
+    """
     squares = pl.DataFrame({"square": SQUARES, "idx": range(len(SQUARES))})
     return (
         counts.select(key).unique()
@@ -197,6 +207,60 @@ def square_heatmap(games: pl.LazyFrame, by: str | None = None) -> pl.DataFrame:
         .agg(counts=pl.col("count").fill_null(0))
         .sort(key)
     )
+
+
+def square_heatmap(games: pl.LazyFrame, by: str | None = None) -> pl.DataFrame:
+    """Destination square of every move, split by side, piece and Elo bracket.
+
+    With `by`, that column is one more key (e.g. opening_family, for games already
+    narrowed to the top openings).
+    """
+    extra = [by] if by else []
+    key = [*extra, "side", "piece", "elo_bracket"]
+    counts = parsed_moves(games, *extra).group_by(*key, "square").agg(count=pl.len()).collect()
+    return square_rows(counts, key)
+
+
+def square_events(games: pl.LazyFrame) -> pl.DataFrame:
+    """What happens on each square: captures, checks and checkmates.
+
+    Same shape as square_heatmap, with `metric` as one more key. `side` and `piece` always
+    describe the move: for a capture or check, `square` is where that piece landed. For a
+    checkmate, `square` is where the mated king stood, which is the more telling place.
+    A king only moves by a king move or castling, so its last such move (or its starting
+    square) gives that without replaying the board.
+    """
+    key = ["metric", "side", "piece", "elo_bracket"]
+    moves = parsed_moves(games).cache()
+    captures = moves.filter(pl.col("san").str.contains("x", literal=True)).with_columns(metric=pl.lit("captures"))
+    checks = moves.filter(pl.col("san").str.contains(r"[+#]$")).with_columns(metric=pl.lit("checks"))
+
+    king_moves = (
+        moves.filter(pl.col("piece") == "K")
+        .group_by("gid", "side")
+        .agg(king_square=pl.col("square").sort_by("ply").last())
+    )
+    mates = (
+        moves.filter(pl.col("san").str.ends_with("#"))
+        .with_columns(
+            metric=pl.lit("mates"),
+            mated_side=pl.when(pl.col("side") == "white").then(pl.lit("black")).otherwise(pl.lit("white")),
+        )
+        .join(king_moves, left_on=["gid", "mated_side"], right_on=["gid", "side"], how="left")
+        .with_columns(
+            square=pl.col("king_square").fill_null(
+                pl.when(pl.col("mated_side") == "white").then(pl.lit("e1")).otherwise(pl.lit("e8"))
+            )
+        )
+    )
+    columns = [*key, "square"]
+    counts = (
+        pl.concat([captures.select(columns), checks.select(columns), mates.select(columns)])
+        .group_by(columns)
+        .agg(count=pl.len())
+        .collect()
+    )
+    return square_rows(counts, key)
 
 
 def write_json(df: pl.DataFrame, path: Path) -> None:
@@ -220,8 +284,9 @@ def main() -> None:
         square_heatmap(games.join(top_openings(games, BOARD_OPENINGS), on="opening_family"), by="opening_family"),
         args.out / "square_heatmap_openings.json",
     )
+    write_json(square_events(games), args.out / "square_events.json")
     write_json(rating_gap(games), args.out / "rating_gap.json")
-    write_json(time_forfeits(games), args.out / "time_forfeits.json")
+    write_json(game_endings(games), args.out / "game_endings.json")
 
     meta = games.select(
         games=pl.len(),

@@ -9,8 +9,16 @@ import { TabSection } from '../lib/TabSection'
 
 // Example of a non-Vega tab: react-chessboard draws the board, we only color the squares.
 
-// counts[i] is the number of moves to SQUARES[i]; opening_family only in square_heatmap_openings.json
-type Row = { side: 'white' | 'black'; piece: string; elo_bracket: number; counts: number[]; opening_family?: string }
+// counts[i] is the number of events on SQUARES[i]. opening_family is only in
+// square_heatmap_openings.json, metric only in square_events.json.
+type Row = {
+  side: 'white' | 'black'
+  piece: string
+  elo_bracket: number
+  counts: number[]
+  opening_family?: string
+  metric?: string
+}
 type Meta = { board_openings: string[] }
 
 // Same order as SQUARES in preprocessing/aggregate.py: a1, b1, ..., h1, a2, ..., h8
@@ -26,17 +34,50 @@ const PIECES = [
   { value: 'K', label: 'King' },
 ]
 
+const METRICS: Record<string, { label: string; noun: string; legend: string; description: string }> = {
+  moves: {
+    label: 'Moves',
+    noun: 'moves',
+    legend: 'Moves to a square',
+    description:
+      'Destination square of every move. Pick an opening and a piece to see where that opening sends it (all moves of those games, not only the opening moves).',
+  },
+  captures: {
+    label: 'Captures',
+    noun: 'captures',
+    legend: 'Captures on a square',
+    description: 'Where captures happen: the square the capturing piece lands on.',
+  },
+  checks: {
+    label: 'Checks',
+    noun: 'checks',
+    legend: 'Checks from a move to a square',
+    description: 'Where a checking move lands, checkmates included. Side and piece are those giving check.',
+  },
+  mates: {
+    label: 'Checkmates',
+    noun: 'checkmates',
+    legend: 'Kings mated on a square',
+    description:
+      'Where the king stood when it was mated. Side and piece are those giving mate, so "white" shows black kings being mated.',
+  },
+}
+
 const EMPTY_BOARD = '8/8/8/8/8/8/8/8 w - - 0 1'
 // Readable on both light and dark heatmap cells
 const NOTATION_STYLE = { color: '#fff', textShadow: '0 0 2px #000', fontWeight: 600 }
 
 export default function BoardHeatmap() {
+  const [metric, setMetric] = useState('moves')
   const [opening, setOpening] = useState('all')
   const meta = useData<Meta>('meta.json')
   const allRows = useData<Row[]>('square_heatmap.json')
-  // Per-opening counts are a much bigger file, so it's only fetched once an opening is picked.
+  // These bigger files are only fetched once they're needed. An opening can only be combined
+  // with plain moves: per-opening captures, checks and mates would add over 1 MB of data.
   const openingRows = useData<Row[]>(opening === 'all' ? null : 'square_heatmap_openings.json')
-  const rows = opening === 'all' ? allRows : openingRows
+  const eventRows = useData<Row[]>(metric === 'moves' ? null : 'square_events.json')
+  const rows = metric !== 'moves' ? eventRows : opening === 'all' ? allRows : openingRows
+  const { noun, legend, description } = METRICS[metric]
   const [side, setSide] = useState('both')
   const [piece, setPiece] = useState('all')
   const [hovered, setHovered] = useState<string | null>(null)
@@ -45,6 +86,7 @@ export default function BoardHeatmap() {
   const counts = useMemo(() => {
     const m = new Map<string, number>()
     for (const r of rows ?? []) {
+      if (metric !== 'moves' && r.metric !== metric) continue
       if (opening !== 'all' && r.opening_family !== opening) continue
       if (side !== 'both' && r.side !== side) continue
       if (piece !== 'all' && r.piece !== piece) continue
@@ -52,7 +94,7 @@ export default function BoardHeatmap() {
       r.counts.forEach((n, i) => m.set(SQUARES[i], (m.get(SQUARES[i]) ?? 0) + n))
     }
     return m
-  }, [rows, opening, side, piece, inRange])
+  }, [rows, metric, opening, side, piece, inRange])
 
   const total = [...counts.values()].reduce((a, b) => a + b, 0)
 
@@ -68,16 +110,26 @@ export default function BoardHeatmap() {
 
   return (
     <TabSection
-      title="Where do pieces move?"
-      description="Destination square of every move: darker squares get more traffic. Pick an opening and a piece to see where that opening sends it (all moves of those games, not only the opening moves). Color grows with the square root of the count, so the few very busy central squares don't wash out the rest; the legend shows the actual counts."
+      title="What happens on each square?"
+      description={`${description} Darker squares get more. Color grows with the square root of the count, so a few very busy squares don't wash out the rest; the legend shows the actual counts.`}
       controls={
         <>
+          <SegmentedControl
+            data={Object.entries(METRICS).map(([value, m]) => ({
+              value,
+              label: m.label,
+              disabled: opening !== 'all' && value !== 'moves',
+            }))}
+            value={metric}
+            onChange={setMetric}
+          />
           <SegmentedControl data={['both', 'white', 'black']} value={side} onChange={setSide} />
           <Select
             data={[{ value: 'all', label: 'All openings' }, ...(meta?.board_openings ?? [])]}
             value={opening}
             onChange={(v) => setOpening(v ?? 'all')}
             allowDeselect={false}
+            disabled={metric !== 'moves'}
             w={220}
           />
           <Select data={PIECES} value={piece} onChange={(v) => setPiece(v ?? 'all')} allowDeselect={false} w={160} />
@@ -104,7 +156,9 @@ export default function BoardHeatmap() {
             {hovered ? (
               <>
                 <Text fw={700}>{hovered}</Text>
-                <Text>{(counts.get(hovered) ?? 0).toLocaleString()} moves</Text>
+                <Text>
+                  {(counts.get(hovered) ?? 0).toLocaleString()} {noun}
+                </Text>
                 <Text size="sm" c="dimmed">
                   {(((counts.get(hovered) ?? 0) / Math.max(total, 1)) * 100).toFixed(2)}% of selection
                 </Text>
@@ -113,9 +167,9 @@ export default function BoardHeatmap() {
               <Text c="dimmed">Hover a square</Text>
             )}
             <Text size="sm" c="dimmed" mt="sm">
-              {total.toLocaleString()} moves in selection
+              {total.toLocaleString()} {noun} in selection
             </Text>
-            <Legend color={color} hovered={hovered ? (counts.get(hovered) ?? 0) : null} />
+            <Legend color={color} title={legend} hovered={hovered ? (counts.get(hovered) ?? 0) : null} />
           </Stack>
         </Paper>
       </Group>
@@ -126,7 +180,15 @@ export default function BoardHeatmap() {
 const LEGEND_WIDTH = 200
 
 /** Color ramp with count ticks placed on the same sqrt scale as the squares. */
-function Legend({ color, hovered }: { color: ReturnType<typeof scaleSequentialSqrt<string>>; hovered: number | null }) {
+function Legend({
+  color,
+  title,
+  hovered,
+}: {
+  color: ReturnType<typeof scaleSequentialSqrt<string>>
+  title: string
+  hovered: number | null
+}) {
   const [, max] = color.domain()
   const x = scaleSqrt([0, max], [0, LEGEND_WIDTH])
   const format = x.tickFormat(3, '~s')
@@ -134,7 +196,7 @@ function Legend({ color, hovered }: { color: ReturnType<typeof scaleSequentialSq
   return (
     <Stack gap={2} mt="md">
       <Text size="xs" c="dimmed">
-        Moves to a square (square-root scale)
+        {title} (square-root scale)
       </Text>
       <div style={{ position: 'relative', width: LEGEND_WIDTH, height: 12, background: `linear-gradient(to right, ${ramp})` }}>
         {hovered !== null && (
