@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react'
-import { SegmentedControl } from '@mantine/core'
+import { useMemo } from 'react'
 import { VegaEmbed } from 'react-vega'
 import type { VisualizationSpec } from 'vega-embed'
 import { useData } from '../lib/data'
@@ -9,11 +8,6 @@ import { TabSection } from '../lib/TabSection'
 
 type Row = { gap: number; elo_bracket: number; games: number; white: number; draw: number; black: number }
 
-
-const VIEWS = [
-  { value: 'white', label: "White's score" },
-  { value: 'favorite', label: "Higher-rated player's score" },
-]
 
 const series = {
   scale: { domain: ['Actual score', 'Elo prediction'], range: [ACCENT, INK] },
@@ -147,15 +141,10 @@ const spec: VisualizationSpec = {
 
 export default function RatingGap() {
   const rows = useData<Row[]>('rating_gap.json')
-  const [view, setView] = useState('white')
   const { inRange } = useEloFilter()
 
   const fullSpec = useMemo(() => {
-    let filtered = (rows ?? []).filter((r) => inRange(r.elo_bracket))
-    if (view === 'favorite') {
-      // Look at every game from the higher-rated side: a black favorite becomes a positive gap.
-      filtered = filtered.map((r) => (r.gap < 0 ? { ...r, gap: -r.gap, white: r.black, black: r.white } : r))
-    }
+    const filtered = (rows ?? []).filter((r) => inRange(r.elo_bracket))
     const values = sumResults(filtered, 'gap')
       .filter((r) => r.games >= MIN_GAMES)
       .map((r) => {
@@ -166,13 +155,12 @@ export default function RatingGap() {
         return { ...r, ...s, expected, diff: s.score - expected, diff_lo, diff_hi, diff_ci: `${pct(diff_lo)} to ${pct(diff_hi)}` }
       })
     return { ...spec, data: { values } } as VisualizationSpec
-  }, [rows, inRange, view])
+  }, [rows, inRange])
 
   return (
     <TabSection
-      title="Does the higher-rated player win as often as predicted?"
-      description={`Actual score by rating gap (with a 95% interval) against what the Elo formula expects. Gap = white − black, in 25-point bins; bins with fewer than ${MIN_GAMES} games are hidden. The middle panel shows the difference, actual minus predicted: points above the dashed line mean white (or the favorite) scores more than Elo expects. The bars at the bottom show how many games each gap has.`}
-      controls={<SegmentedControl data={VIEWS} value={view} onChange={setView} />}
+      title="Does the Elo formula predict results?"
+      description={`White's actual score by rating gap (with a 95% interval) against what the Elo formula expects. Gap = white − black, in 25-point bins; bins with fewer than ${MIN_GAMES} games are hidden. The middle panel shows the difference, actual minus predicted: points above the dashed line mean white scores more than Elo expects. The bars at the bottom show how many games each gap has.`}
       loading={!rows}
     >
       <VegaEmbed spec={fullSpec} />
