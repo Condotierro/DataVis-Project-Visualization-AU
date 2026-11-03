@@ -3,7 +3,21 @@ import { Text, Title } from '@mantine/core'
 import { VegaEmbed } from 'react-vega'
 import type { Result, VisualizationSpec } from 'vega-embed'
 import { useData } from '../lib/data'
-import { ACCENT, CONTEXT, DIMMED, INK, MIN_GAMES, bracketLabel, bracketLabelExpr, scoreWithCI, sumResults } from '../lib/chess'
+import {
+  ACCENT,
+  CONTEXT,
+  DIMMED,
+  INK,
+  MIN_BRACKET_GAMES,
+  MIN_GAMES,
+  RESULT_MARK,
+  bracketLabel,
+  bracketLabelExpr,
+  resultColor,
+  scoreWithCI,
+  sumResults,
+  toResultRows,
+} from '../lib/chess'
 import { useEloFilter } from '../lib/eloRange'
 import { TabSection } from '../lib/TabSection'
 
@@ -125,6 +139,62 @@ const detailSpec: VisualizationSpec = {
   ],
 }
 
+const COMPARED = 15 // most played openings in the two comparison charts
+
+// White wins, draws and black wins, for what the score above folds into one number.
+const resultsSpec: VisualizationSpec = {
+  $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
+  data: { name: 'table' }, // placeholder, filled in below
+  width: 'container',
+  height: COMPARED * 24,
+  mark: RESULT_MARK,
+  encoding: {
+    y: { field: 'opening_family', type: 'nominal', title: null, sort: { field: 'score', order: 'descending' } },
+    x: { field: 'count', type: 'quantitative', stack: 'normalize', title: 'Share of games', axis: { format: '%', values: [0, 0.25, 0.5, 0.75, 1] } },
+    color: { ...resultColor, legend: { orient: 'top' } },
+    order: { field: 'order' },
+    tooltip: [
+      { field: 'opening_family', title: 'Opening' },
+      { field: 'result', title: 'Result' },
+      { field: 'share', title: 'Share', format: '.1%' },
+      { field: 'count', title: 'Games', format: ',' },
+    ],
+  },
+}
+
+// Openings x brackets. The color is the opening's share of that bracket, on a sqrt scale
+// so that one very common opening doesn't wash out the differences among the others.
+const popularitySpec: VisualizationSpec = {
+  $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
+  data: { name: 'table' }, // placeholder, filled in below
+  width: 'container',
+  height: COMPARED * 24,
+  mark: { type: 'rect', stroke: 'white', strokeWidth: 1 },
+  encoding: {
+    x: {
+      field: 'elo_bracket',
+      type: 'ordinal',
+      title: 'Average Elo of both players',
+      axis: { labelExpr: bracketLabelExpr('datum.value', false), labelAngle: 0 },
+    },
+    y: { field: 'opening_family', type: 'nominal', title: null, sort: { field: 'rank' } },
+    color: {
+      field: 'share',
+      type: 'quantitative',
+      title: 'Share of games',
+      scale: { type: 'sqrt', range: ['#eef3fa', ACCENT] },
+      legend: { format: '.0%', orient: 'top' },
+    },
+    opacity: { condition: { test: 'datum.inRange', value: 1 }, value: DIMMED },
+    tooltip: [
+      { field: 'opening_family', title: 'Opening' },
+      { field: 'bracket_label', title: 'Elo bracket' },
+      { field: 'share', title: 'Share of bracket', format: '.1%' },
+      { field: 'games', title: 'Games', format: ',' },
+    ],
+  },
+}
+
 const ciLabel = (s: { lo: number; hi: number }) => `${(s.lo * 100).toFixed(1)}–${(s.hi * 100).toFixed(1)}%`
 
 export default function Openings() {
@@ -185,6 +255,31 @@ export default function Openings() {
     return { ...detailSpec, datasets: { overall: reference }, data: { values } } as VisualizationSpec
   }, [rows, all, shown, inRange])
 
+  const results = useMemo(() => {
+    const top = sumResults((rows ?? []).filter((r) => inRange(r.elo_bracket)), 'opening_family')
+      .filter((r) => r.games >= MIN_GAMES)
+      .sort((a, b) => b.games - a.games)
+      .slice(0, COMPARED)
+      .map((r) => ({ ...r, score: scoreWithCI(r).score }))
+    return { ...resultsSpec, data: { values: toResultRows(top) } } as VisualizationSpec
+  }, [rows, inRange])
+
+  const popularity = useMemo(() => {
+    const totals = new Map(sumResults(all ?? [], 'elo_bracket').map((r) => [r.elo_bracket, r.games]))
+    const ranked = sumResults(rows ?? [], 'opening_family').sort((a, b) => b.games - a.games)
+    const rank = new Map(ranked.slice(0, COMPARED).map((r, i) => [r.opening_family, i]))
+    const values = (rows ?? [])
+      .filter((r) => rank.has(r.opening_family) && (totals.get(r.elo_bracket) ?? 0) >= MIN_BRACKET_GAMES)
+      .map((r) => ({
+        ...r,
+        rank: rank.get(r.opening_family),
+        share: r.games / totals.get(r.elo_bracket)!,
+        inRange: inRange(r.elo_bracket),
+        bracket_label: bracketLabel(r.elo_bracket),
+      }))
+    return { ...popularitySpec, data: { values } } as VisualizationSpec
+  }, [rows, all, inRange])
+
   // Clicking a dot picks that opening for the chart below.
   const onEmbed = useCallback(({ view }: Result) => {
     view.addEventListener('click', (_, item) => {
@@ -208,6 +303,22 @@ export default function Openings() {
         Brackets with fewer than {MIN_GAMES} games of this opening are left out.
       </Text>
       <VegaEmbed spec={detail} style={{ width: '100%' }} />
+      <Title order={4} mt="lg">
+        Wins, draws and losses by opening
+      </Title>
+      <Text size="sm" c="dimmed" mb="xs">
+        The {COMPARED} most played openings in the Elo filter, with the best score for white on top.
+      </Text>
+      <VegaEmbed spec={results} style={{ width: '100%' }} />
+      <Title order={4} mt="lg">
+        Who plays what: opening popularity by rating
+      </Title>
+      <Text size="sm" c="dimmed" mb="xs">
+        Each cell is the share of that bracket's games played with the opening, so brackets of different sizes compare
+        fairly. Read along a row to see an opening rise or fall with rating. The {COMPARED} most played openings overall;
+        brackets with fewer than {MIN_BRACKET_GAMES} games are left out.
+      </Text>
+      <VegaEmbed spec={popularity} style={{ width: '100%' }} />
     </TabSection>
   )
 }

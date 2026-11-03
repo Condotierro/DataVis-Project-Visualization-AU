@@ -27,7 +27,7 @@ ELO_BIN = 200
 TOP_OPENINGS = 40  # enough points for the openings scatterplot
 GAP_BIN = 25  # rating gap (white - black) bin width
 MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
-BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap
+BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap and in game endings
 MOVES_BIN = 5  # game length bin width, in full moves
 MAX_MOVES = 100  # longer games go in the last bin, labeled "100+" in the app
 
@@ -124,17 +124,23 @@ def rating_gap(games: pl.LazyFrame) -> pl.DataFrame:
 
 
 def game_endings(games: pl.LazyFrame) -> pl.DataFrame:
-    """How games end, by game length and Elo bracket.
+    """How games end, by game length, Elo bracket and opening.
+
+    Openings outside the top BOARD_OPENINGS are pooled, so each view's totals stay complete.
 
     The dump's "Normal" termination covers mates, resignations and draws, so they are
     told apart here: a decisive game that doesn't end on "#" was resigned.
     """
     full_moves = (pl.col("num_plies") + 1) // 2
+    top = top_openings(games, BOARD_OPENINGS).collect()["opening_family"].to_list()
     return (
         # Dropped: the full dump's few aborted or rule-breaking games ("Abandoned", ...).
         games.filter(pl.col("termination").is_in(["Normal", "Time forfeit", "Insufficient material"]))
         .with_columns(
             moves_bin=(full_moves // MOVES_BIN * MOVES_BIN).clip(0, MAX_MOVES),
+            opening=pl.when(pl.col("opening_family").is_in(top))
+            .then(pl.col("opening_family"))
+            .otherwise(pl.lit("Other openings")),
             # Lichess's "Insufficient material" termination is a flag fall against a
             # side that can't mate (scored a draw), so it's a time forfeit too.
             ending=pl.when(pl.col("termination") != "Normal")
@@ -145,10 +151,10 @@ def game_endings(games: pl.LazyFrame) -> pl.DataFrame:
             .then(pl.lit("Checkmate"))
             .otherwise(pl.lit("Resignation")),
         )
-        .group_by("elo_bracket", "moves_bin", "ending")
+        .group_by("elo_bracket", "opening", "moves_bin", "ending")
         .agg(games=pl.len())
         .rename({"moves_bin": "moves"})
-        .sort("elo_bracket", "moves", "ending")
+        .sort("elo_bracket", "opening", "moves", "ending")
         .collect()
     )
 
