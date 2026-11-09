@@ -8,13 +8,14 @@ import { TabSection } from '../lib/TabSection'
 
 type Row = { gap: number; elo_bracket: number; games: number; white: number; draw: number; black: number }
 
-
 const series = {
   scale: { domain: ['Actual score', 'Elo prediction'], range: [ACCENT, INK] },
   legend: { title: null, orient: 'top-left' },
 } as const
 
-const spec: VisualizationSpec = {
+// The x range follows the data (the group's sample drops games with a gap over 100),
+// padded by half a bin so the outer histogram bars aren't cut.
+const makeSpec = (max: number): VisualizationSpec => ({
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
   data: { name: 'table' }, // placeholder, filled in below
   vconcat: [
@@ -28,7 +29,7 @@ const spec: VisualizationSpec = {
         },
         {
           // Expected score under the Elo formula, drawn as a smooth curve.
-          data: { sequence: { start: -400, stop: 401, step: 5, as: 'gap' } },
+          data: { sequence: { start: -max, stop: max + 1, step: 5, as: 'gap' } },
           transform: [{ calculate: '1 / (1 + pow(10, -datum.gap / 400))', as: 'expected' }],
           mark: { type: 'line', strokeWidth: 2, strokeDash: [6, 4] },
           encoding: {
@@ -52,7 +53,7 @@ const spec: VisualizationSpec = {
               field: 'gap',
               type: 'quantitative',
               title: null,
-              scale: { domain: [-400, 400] },
+              scale: { domain: [-max - 12.5, max + 12.5] },
               axis: { labels: false, ticks: false },
             },
             y: {
@@ -98,7 +99,7 @@ const spec: VisualizationSpec = {
               field: 'gap',
               type: 'quantitative',
               title: null,
-              scale: { domain: [-400, 400] },
+              scale: { domain: [-max - 12.5, max + 12.5] },
               axis: { labels: false, ticks: false },
             },
             y: {
@@ -125,8 +126,8 @@ const spec: VisualizationSpec = {
         x: {
           field: 'gap',
           type: 'quantitative',
-          bin: { step: 25, anchor: -12.5, extent: [-412.5, 412.5] },
-          scale: { domain: [-400, 400] },
+          bin: { step: 25, anchor: -12.5, extent: [-max - 12.5, max + 12.5] },
+          scale: { domain: [-max - 12.5, max + 12.5] },
           title: 'Rating gap',
         },
         y: { field: 'games', type: 'quantitative', aggregate: 'sum', title: 'Games', axis: { tickCount: 2 } },
@@ -137,7 +138,7 @@ const spec: VisualizationSpec = {
       },
     },
   ],
-}
+})
 
 export default function RatingGap() {
   const rows = useData<Row[]>('rating_gap.json')
@@ -154,7 +155,8 @@ export default function RatingGap() {
         const pct = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`
         return { ...r, ...s, expected, diff: s.score - expected, diff_lo, diff_hi, diff_ci: `${pct(diff_lo)} to ${pct(diff_hi)}` }
       })
-    return { ...spec, data: { values } } as VisualizationSpec
+    const max = Math.max(100, ...(rows ?? []).map((r) => Math.abs(r.gap)))
+    return { ...makeSpec(max), data: { values } } as VisualizationSpec
   }, [rows, inRange])
 
   return (
