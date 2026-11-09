@@ -4,10 +4,10 @@ Each output file feeds one (or more) tabs in web/src/tabs/. Keep them small --
 they're committed to git and shipped to GitHub Pages as-is.
 
 The input is either the Parquet written by extract.py or the group's sampled
-CSV (Sampling_100k.zip at the repo root, or the unzipped .csv).
+CSV (New_Sampling.zip at the repo root, or the unzipped .csv).
 
 Usage:
-    uv run aggregate.py ../Sampling_100k.zip --out ../web/public/data
+    uv run aggregate.py ../New_Sampling.zip --out ../web/public/data
     uv run aggregate.py ../data/interim/games.parquet --out ../web/public/data
 """
 
