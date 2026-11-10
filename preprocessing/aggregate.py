@@ -29,7 +29,6 @@ GAP_BIN = 25  # rating gap (white - black) bin width
 MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
 BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap and in game endings
 MOVES_BIN = 5  # game length bin width, in full moves
-MAX_MOVES = 100  # longer games go in the last bin, labeled "100+" in the app
 
 
 def read_sample_csv(path: Path) -> pl.DataFrame:
@@ -137,7 +136,8 @@ def game_endings(games: pl.LazyFrame) -> pl.DataFrame:
         # Dropped: the full dump's few aborted or rule-breaking games ("Abandoned", ...).
         games.filter(pl.col("termination").is_in(["Normal", "Time forfeit", "Insufficient material"]))
         .with_columns(
-            moves_bin=(full_moves // MOVES_BIN * MOVES_BIN).clip(0, MAX_MOVES),
+            # Not capped: the app's axis ends at the longest game, so no open "100+" bin.
+            moves_bin=full_moves // MOVES_BIN * MOVES_BIN,
             opening=pl.when(pl.col("opening_family").is_in(top))
             .then(pl.col("opening_family"))
             .otherwise(pl.lit("Other openings")),
