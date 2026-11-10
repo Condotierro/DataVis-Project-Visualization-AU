@@ -24,10 +24,26 @@ const ending = {
 const endingOrder = { calculate: `indexof(${JSON.stringify(ENDINGS)}, datum.ending)`, as: 'order' }
 const OTHER = 'Other openings'
 
-// The last bin is open-ended (every game of 100+ moves), so it isn't as wide as the others.
-// It gets a dashed outline and a gap before it, so its count isn't read as one more 5-move bin.
-const OPEN_BIN = 100
-const movesLabel = `datum.moves === ${OPEN_BIN} ? '100 or more (all longer games)' : datum.moves + '–' + (datum.moves + 4)`
+// Game length, in 5-move bins. The axis ends where the games do: past the last bin, at most
+// TAIL of all games are left (a handful of very long games, up to ~185 moves, too few to see
+// as bars). They are left out rather than lumped into an open "N+" bin, and the description
+// says how many.
+const MOVES_BIN = 5
+const TAIL = 0.001
+const movesLabel = `datum.moves + '–' + (datum.moves + ${MOVES_BIN - 1})`
+
+/** The last length bin to plot, and how many games lie beyond it. */
+function lengthCut(rows: Row[]) {
+  const byBin = new Map<number, number>()
+  for (const r of rows) byBin.set(r.moves, (byBin.get(r.moves) ?? 0) + r.games)
+  const bins = [...byBin].sort((a, b) => a[0] - b[0])
+  const total = bins.reduce((n, [, g]) => n + g, 0)
+  let beyond = 0
+  let i = bins.length - 1
+  // Drop bins from the end while what's dropped stays within TAIL.
+  while (i > 0 && beyond + bins[i][1] <= TAIL * total) beyond += bins[i--][1]
+  return { last: bins[i]?.[0] ?? 0, hidden: beyond }
+}
 
 /** Share of each ending within `field`. A share of few games looks like a finding but is mostly noise. */
 const sharesBy = (field: string) => [
@@ -59,7 +75,15 @@ function panelWidths(container: number) {
   return { sideBySide, top, length: container - Math.max(BRACKET_AXIS, LENGTH_AXIS) }
 }
 
-const makeSpec = (normalize: boolean, openings: string[], picks: Picks, container: number) => {
+/**
+ * Toggle expression for a single-pick point selection: clicking the picked bar again clears
+ * it, and clicking another bar replaces it. Vega-Lite only toggles when this is true, and it's
+ * evaluated on the click, before the selection changes, so `param` still holds the old pick.
+ */
+const reclickClears = (param: string, field: string) =>
+  `!!datum && isArray(${param}.${field}) && indexof(${param}.${field}, datum.${field}) >= 0`
+
+const makeSpec = (normalize: boolean, openings: string[], picks: Picks, container: number, lastBin: number) => {
   const w = panelWidths(container)
   return {
     $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
@@ -76,7 +100,7 @@ const makeSpec = (normalize: boolean, openings: string[], picks: Picks, containe
             params: [
               {
                 name: 'pickBracket',
-                select: { type: 'point', fields: ['elo_bracket'] },
+                select: { type: 'point', fields: ['elo_bracket'], toggle: reclickClears('pickBracket', 'elo_bracket') },
                 ...(picks.bracket !== null && { value: [{ elo_bracket: picks.bracket }] }),
               },
             ],
@@ -114,7 +138,7 @@ const makeSpec = (normalize: boolean, openings: string[], picks: Picks, containe
             params: [
               {
                 name: 'pickOpening',
-                select: { type: 'point', fields: ['opening'] },
+                select: { type: 'point', fields: ['opening'], toggle: reclickClears('pickOpening', 'opening') },
                 ...(picks.opening !== null && { value: [{ opening: picks.opening }] }),
               },
             ],
@@ -147,6 +171,7 @@ const makeSpec = (normalize: boolean, openings: string[], picks: Picks, containe
         transform: [
           { filter: { param: 'pickBracket', empty: true } },
           { filter: { param: 'pickOpening', empty: true } },
+          { filter: `datum.moves <= ${lastBin}` },
           { aggregate: [{ op: 'sum', field: 'games', as: 'games' }], groupby: ['moves', 'ending'] },
           { joinaggregate: [{ op: 'sum', field: 'games', as: 'bin_games' }], groupby: ['moves'] },
           // One game in a bin would otherwise draw a full-height bar of a single ending.
@@ -160,22 +185,23 @@ const makeSpec = (normalize: boolean, openings: string[], picks: Picks, containe
           x: {
             field: 'moves',
             type: 'ordinal',
-            title: 'Game length (full moves; last bar: 100 or more)',
+            title: w.sideBySide
+              ? 'Game length, in moves (1 move = one turn each for white and black)'
+              : ['Game length, in moves', '(1 move = one turn each for white and black)'],
             // A blank slot before the open bin separates it from the regular ones.
-            scale: { domain: [...Array.from({ length: OPEN_BIN / 5 }, (_, i) => i * 5), -1, OPEN_BIN] },
+            // Every bin up to the cut, so a length with no games still gets its slot.
+            scale: { domain: Array.from({ length: lastBin / MOVES_BIN + 1 }, (_, i) => i * MOVES_BIN) },
             axis: {
-              labelExpr: `datum.value === ${OPEN_BIN} ? '100+' : datum.value < 0 ? '' : datum.value`,
               labelAngle: 0,
               labelOverlap: true,
               ticks: false,
             },
           },
-          strokeDash: { condition: { test: `datum.moves === ${OPEN_BIN}`, value: [3, 2] }, value: [1, 0] },
           y: {
             field: 'games',
             type: 'quantitative',
             stack: normalize ? 'normalize' : 'zero',
-            title: normalize ? 'Share of games' : 'Games',
+            title: normalize ? 'Share of games (%)' : 'Number of games',
             axis: normalize ? { format: '%' } : {},
           },
           color: ending,
@@ -202,6 +228,9 @@ export default function GameEndings() {
 
   const { ref, width: container } = useElementSize()
 
+  // From every game, not the Elo filter, so the axis doesn't change length as the filter moves.
+  const cut = useMemo(() => lengthCut(rows ?? []), [rows])
+
   const fullSpec = useMemo(() => {
     const totals = new Map<string, number>()
     for (const r of rows ?? []) totals.set(r.opening, (totals.get(r.opening) ?? 0) + r.games)
@@ -216,13 +245,13 @@ export default function GameEndings() {
     const { bracket, opening } = picks.current
     // A bracket the Elo filter just removed would leave every chart empty.
     const kept = { opening, bracket: bracket !== null && inRange(bracket) ? bracket : null }
-    const spec = makeSpec(scale === 'share', openings, kept, container)
+    const spec = makeSpec(scale === 'share', openings, kept, container, cut.last)
     /* oxlint-enable react/refs */
     return {
       ...spec,
       data: { values: (rows ?? []).filter((r) => inRange(r.elo_bracket)) },
     } as VisualizationSpec
-  }, [rows, scale, inRange, container])
+  }, [rows, scale, inRange, container, cut])
 
   const onEmbed = useCallback(({ view }: Result) => {
     view.addSignalListener('pickBracket', (_, value) => {
@@ -236,7 +265,7 @@ export default function GameEndings() {
   return (
     <TabSection
       title="How do games end?"
-      description={`In 3-minute games many are decided by the clock, not the board. A decisive game that ends without mate or a flag counts as a resignation. Click a rating or an opening to filter the other charts; click empty space in that chart to reset it. Groups with fewer than ${MIN_BRACKET_GAMES} games are left out of the top charts, and lengths with fewer than ${MIN_GAMES} from the share view.`}
+      description={`In 3-minute games many are decided by the clock, not the board. A decisive game that ends without mate or a flag counts as a resignation. Click a rating or an opening to filter the other charts; click it again, or empty space in that chart, to reset it. Groups with fewer than ${MIN_BRACKET_GAMES} games are left out of the top charts, and lengths with fewer than ${MIN_GAMES} from the share view. The length chart stops at ${cut.last + MOVES_BIN - 1} moves; the ${cut.hidden.toLocaleString('en')} longer games (under ${TAIL * 100}% of all) are too few to show.`}
       controls={
         <SegmentedControl
           data={[
