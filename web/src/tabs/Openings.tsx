@@ -23,79 +23,98 @@ import { TabSection } from '../lib/TabSection'
 
 type Row = { opening_family: string; elo_bracket: number; games: number; white: number; draw: number; black: number }
 
-const LABELED = 6 // name the most played openings on the chart; the rest are in tooltips
+const ROW = 17 // px per opening; every opening gets a labeled row
+const LABEL_WIDTH = 140 // fits the longest opening name
 
-const x = {
-  field: 'games',
-  type: 'quantitative' as const,
-  scale: { type: 'log' as const, nice: false, padding: 24 },
-  title: 'Games played (log scale)',
-  axis: { values: [300, 500, 1000, 2000, 5000, 10000, 20000], format: '~s' },
-}
+// Forest plot: one row per opening, sorted by white's score, so the ranking answers the
+// question directly and every opening is named. Popularity is left to the tooltip; the
+// width of the interval already shows how much data an opening has.
+const tooltip = [
+  { field: 'opening_family', title: 'Opening' },
+  { field: 'games', title: 'Games', format: ',' },
+  { field: 'score', title: "White's score", format: '.1%' },
+  { field: 'ci', title: '95% interval' },
+  { field: 'white_share', title: 'White wins', format: '.1%' },
+  { field: 'draw_share', title: 'Draws', format: '.1%' },
+  { field: 'black_share', title: 'Black wins', format: '.1%' },
+]
+
+// The ranking itself: rows sorted by score, best for white on top.
+const y = {
+  field: 'opening_family',
+  type: 'nominal',
+  title: null,
+  sort: { field: 'score', order: 'descending' },
+  axis: {
+    labelFontWeight: { expr: "datum.value === shown ? 'bold' : 'normal'" },
+    labelColor: { expr: `datum.value === shown ? '${INK}' : '#4a4944'` },
+    ticks: false,
+    domain: false,
+    labelPadding: 6,
+    labelLimit: LABEL_WIDTH - 6,
+  },
+} as const
 
 const spec: VisualizationSpec = {
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
   data: { name: 'table' }, // placeholder, filled in below
   width: 'container',
-  height: 440,
-  encoding: {
-    y: {
-      field: 'score',
-      type: 'quantitative',
-      scale: { zero: false },
-      title: "White's score (win = 1, draw = ½)",
-      axis: { format: '.0%' },
-    },
-  },
+  height: { step: ROW },
+  params: [{ name: 'shown', value: null }], // the opening shown in the chart below, set per render
   layer: [
     {
-      // Helper line: the average over all games in the Elo filter. It splits the plot into
-      // openings that do better or worse for white than chess in general.
+      // Row band, reaching left under the axis label: a big click/hover target, and a light
+      // background for the picked opening. (Vega axis labels don't take pointer events.)
+      mark: { type: 'rect', cursor: 'pointer' },
+      encoding: {
+        y,
+        x: { value: -LABEL_WIDTH },
+        x2: { value: 'width' },
+        color: { condition: { test: 'datum.opening_family === shown', value: '#eceae4' }, value: 'white' },
+        opacity: { condition: { test: 'datum.opening_family === shown', value: 1 }, value: 0.001 },
+        tooltip,
+      },
+    },
+    {
+      // Helper line: the average over all games in the Elo filter. Rows whose interval
+      // stays to its right do clearly better for white than chess in general.
       data: { name: 'mean' },
       mark: { type: 'rule', color: INK, strokeDash: [6, 4] },
-      encoding: { y: { field: 'score', type: 'quantitative' } },
+      encoding: { x: { field: 'score', type: 'quantitative' } },
     },
     {
       data: { name: 'mean' },
-      mark: { type: 'text', color: INK, align: 'left', baseline: 'top', dy: 3, x: 4 },
+      mark: { type: 'text', color: INK, align: 'left', baseline: 'top', dx: 4, dy: 4 },
       encoding: {
-        y: { field: 'score', type: 'quantitative' },
+        x: { field: 'score', type: 'quantitative' },
+        y: { value: 'height' },
         text: { value: 'average of all games' },
       },
     },
     {
       // 95% interval, subordinate to the points.
-      mark: { type: 'rule', color: CONTEXT, strokeWidth: 1.5 },
-      encoding: { x, y: { field: 'lo' }, y2: { field: 'hi' } },
+      mark: { type: 'rule', color: CONTEXT, strokeWidth: 2 },
+      encoding: { y, x: { field: 'lo', type: 'quantitative' }, x2: { field: 'hi' }, tooltip },
     },
     {
-      mark: { type: 'circle', color: ACCENT, size: 70, opacity: 1, cursor: 'pointer' },
+      mark: { type: 'circle', color: ACCENT, size: 60, opacity: 1, cursor: 'pointer' },
       encoding: {
-        x,
-        // The opening shown in the chart below gets a dark ring.
-        stroke: { condition: { test: 'datum.picked', value: INK }, value: 'white' },
-        strokeWidth: { condition: { test: 'datum.picked', value: 2.5 }, value: 1 },
-        tooltip: [
-          { field: 'opening_family', title: 'Opening' },
-          { field: 'games', title: 'Games', format: ',' },
-          { field: 'score', title: "White's score", format: '.1%' },
-          { field: 'ci', title: '95% interval' },
-          { field: 'white_share', title: 'White wins', format: '.1%' },
-          { field: 'draw_share', title: 'Draws', format: '.1%' },
-          { field: 'black_share', title: 'Black wins', format: '.1%' },
-        ],
+        y,
+        x: {
+          field: 'score',
+          type: 'quantitative',
+          scale: { zero: false, nice: true },
+          title: "White's score (win = 1, draw = ½)",
+          axis: { format: '.0%', orient: 'top', tickCount: 8 },
+        },
+        tooltip,
       },
-    },
-    {
-      transform: [{ filter: `datum.rank <= ${LABELED} || datum.picked` }],
-      mark: { type: 'text', align: 'left', dx: 7, fontSize: 11, color: INK, fontWeight: { expr: "datum.picked ? 'bold' : 'normal'" } },
-      encoding: { x, text: { field: 'opening_family' } },
     },
   ],
 }
 
 // One opening across Elo brackets: does it work better for weaker or stronger players?
-// Same y as the scatterplot, and the dashed line is again all games, now per bracket.
+// Same score as the ranking above (on y here), and the dashed line is again all games, now per bracket.
 const detailSpec: VisualizationSpec = {
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
   data: { name: 'table' }, // placeholder, filled in below
@@ -207,12 +226,11 @@ export default function Openings() {
     const values = sumResults((rows ?? []).filter((r) => inRange(r.elo_bracket)), 'opening_family')
       .filter((r) => r.games >= MIN_GAMES)
       .sort((a, b) => b.games - a.games)
-      .map((r, i) => {
+      .map((r) => {
         const s = scoreWithCI(r)
         return {
           ...r,
           ...s,
-          rank: i + 1,
           ci: ciLabel(s),
           white_share: r.white / r.games,
           draw_share: r.draw / r.games,
@@ -227,8 +245,8 @@ export default function Openings() {
     const mean = total ? [{ score: scoreWithCI(total).score }] : []
     // Until something is clicked, show the most played opening.
     const shown = values.find((r) => r.opening_family === picked) ?? values[0]
-    const marked = values.map((r) => ({ ...r, picked: r === shown }))
-    return { spec: { ...spec, datasets: { mean }, data: { values: marked } } as VisualizationSpec, shown: shown?.opening_family }
+    const params = [{ name: 'shown', value: shown?.opening_family ?? null }]
+    return { spec: { ...spec, params, datasets: { mean }, data: { values } } as VisualizationSpec, shown: shown?.opening_family }
   }, [rows, all, inRange, picked])
 
   const shown = fullSpec.shown
@@ -280,7 +298,7 @@ export default function Openings() {
     return { ...popularitySpec, data: { values } } as VisualizationSpec
   }, [rows, all, inRange])
 
-  // Clicking a dot picks that opening for the chart below.
+  // Clicking a row (label included) picks that opening for the chart below.
   const onEmbed = useCallback(({ view }: Result) => {
     view.addEventListener('click', (_, item) => {
       const name = (item?.datum as { opening_family?: string } | undefined)?.opening_family
@@ -291,7 +309,7 @@ export default function Openings() {
   return (
     <TabSection
       title="Which openings are good for white?"
-      description={`Each dot is an opening family: how often it's played against how well white scores with it. Openings above the dashed line do better for white than the average game. Bars are 95% intervals: an opening whose bar crosses the line isn't clearly different from average. Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden. Click a dot to see that opening by rating below.`}
+      description={`Each row is an opening family, ranked by how well white scores with it. Openings right of the dashed line do better for white than the average game. Bars are 95% intervals: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden. Click a row to see that opening by rating below.`}
       loading={!rows || !all}
     >
       <VegaEmbed spec={fullSpec.spec} onEmbed={onEmbed} style={{ width: '100%' }} />
