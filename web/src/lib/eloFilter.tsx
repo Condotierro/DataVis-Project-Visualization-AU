@@ -26,7 +26,7 @@ type Row = { elo_bracket: number; games: number; white: number; draw: number; bl
 const spec: VisualizationSpec = {
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
   data: { name: 'table' }, // placeholder, filled in below
-  height: 60,
+  height: 120,
   // The width passed in is the whole box; the y axis has to fit inside it.
   autosize: { type: 'fit-x', contains: 'padding' },
   transform: [{ calculate: 'datum.band + 1', as: 'end' }],
@@ -50,9 +50,9 @@ const spec: VisualizationSpec = {
       field: 'games',
       type: 'quantitative',
       title: 'Games',
-      // Few ticks: the chart is only 60 px tall. Thousands as "k" (40k), and a plain 0.
+      // Thousands as "k" (40k), and a plain 0.
       axis: {
-        tickCount: 3,
+        tickCount: 4,
         labelExpr: "datum.value ? format(datum.value / 1000, '~d') + 'k' : '0'",
         domain: false,
         ticks: false,
