@@ -25,8 +25,6 @@ from openings import opening_name
 
 ELO_BIN = 200
 TOP_OPENINGS = 40  # enough points for the openings scatterplot
-GAP_BIN = 25  # rating gap (white - black) bin width
-MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
 BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap and in game endings
 MOVES_BIN = 5  # game length bin width, in full moves
 
@@ -138,20 +136,6 @@ def openings_by_eco(games: pl.LazyFrame) -> pl.DataFrame:
         .group_by("opening_family", "elo_bracket")
         .agg(result_counts())
         .sort("opening_family", "elo_bracket")
-        .collect()
-    )
-
-
-def rating_gap(games: pl.LazyFrame) -> pl.DataFrame:
-    """Results by rating gap, to compare against the score the Elo formula predicts."""
-    gap = pl.col("white_elo").cast(pl.Int32) - pl.col("black_elo")
-    return (
-        games.filter(gap.abs() < MAX_GAP + GAP_BIN // 2)
-        # Bins centered on multiples of GAP_BIN, so a gap of 0 is its own bin.
-        .with_columns(gap=((gap + GAP_BIN // 2) // GAP_BIN * GAP_BIN))
-        .group_by("gap", "elo_bracket")
-        .agg(result_counts())
-        .sort("gap", "elo_bracket")
         .collect()
     )
 
@@ -326,7 +310,6 @@ def main() -> None:
         args.out / "square_heatmap_openings.json",
     )
     write_json(square_events(games), args.out / "square_events.json")
-    write_json(rating_gap(games), args.out / "rating_gap.json")
     write_json(game_endings(games), args.out / "game_endings.json")
 
     meta = games.select(
