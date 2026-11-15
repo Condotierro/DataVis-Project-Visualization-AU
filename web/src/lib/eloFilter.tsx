@@ -27,6 +27,8 @@ const spec: VisualizationSpec = {
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
   data: { name: 'table' }, // placeholder, filled in below
   height: 60,
+  // The width passed in is the whole box; the y axis has to fit inside it.
+  autosize: { type: 'fit-x', contains: 'padding' },
   transform: [{ calculate: 'datum.band + 1', as: 'end' }],
   // One equal-width bar per range: the ranges differ in Elo width, so on a true Elo axis bar area
   // wouldn't match game counts. The axis is the range index, quantitative so the brush drags freely.
@@ -44,7 +46,19 @@ const spec: VisualizationSpec = {
       },
     },
     x2: { field: 'end' },
-    y: { field: 'games', type: 'quantitative', title: null, axis: null },
+    y: {
+      field: 'games',
+      type: 'quantitative',
+      title: 'Games',
+      // Few ticks: the chart is only 60 px tall. Thousands as "k" (40k), and a plain 0.
+      axis: {
+        tickCount: 3,
+        labelExpr: "datum.value ? format(datum.value / 1000, '~d') + 'k' : '0'",
+        domain: false,
+        ticks: false,
+        gridColor: '#eceae4',
+      },
+    },
     y2: { datum: 0 }, // with x2 set, bars need an explicit base
     // Selection by lightness, not hue: the accent is kept for the data itself.
     // Same rule as snap(): a range is in when the brush covers its middle.
