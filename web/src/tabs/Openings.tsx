@@ -233,8 +233,13 @@ const detailSpec: VisualizationSpec = {
 
 const DETAIL_MIN_HEIGHT = 290; // a bit over the detail chart's rendered height (plot + axis + padding, ~287 px)
 
-const COMPARED = 15; // default for the two comparison charts: this many most played openings
+const COMPARED = 15; // default pick with name families: this many most played openings
 const COMPARED_ROW = 24; // px per opening in the two comparison charts
+
+// Two ways to group openings: the group's ECO families (openings_by_eco.json, 10 families plus
+// Others) or the opening name before the ":" (openings_by_elo.json, the 40 most played).
+type Grouping = "eco" | "name";
+const GROUPING_FILE = { eco: "openings_by_eco.json", name: "openings_by_elo.json" } as const;
 
 // White wins, draws and black wins, for what the score above folds into one number.
 const resultsSpec: VisualizationSpec = {
@@ -310,26 +315,20 @@ const popularitySpec: VisualizationSpec = {
 };
 
 /**
- * Picks the openings for a comparison chart. `options` are sorted by games, most played first;
- * with nothing picked the chart falls back to the first COMPARED of them.
+ * Picks the openings every chart in the tab shows. `options` are sorted by games, most played
+ * first. Clearing it goes back to the default pick.
  */
 function OpeningPicker(props: {
 	options: string[];
 	value: string[];
 	onChange: (v: string[]) => void;
 }) {
-	// Hide picks the Elo filter has since ruled out; they come back if the filter widens again.
-	const value = props.value.filter((o) => props.options.includes(o));
 	return (
 		<MultiSelect
+			label="Openings to include"
 			data={props.options}
-			value={value}
+			value={props.value}
 			onChange={props.onChange}
-			placeholder={
-				value.length
-					? undefined
-					: `${COMPARED} most played (default). Pick openings to compare`
-			}
 			searchable
 			clearable
 			// Picked openings stay in the list as ticked checkboxes; clicking one again unticks it.
@@ -346,34 +345,50 @@ function OpeningPicker(props: {
 			nothingFoundMessage="No opening with that name"
 			maxDropdownHeight={280}
 			comboboxProps={{ zIndex: 1100 }} // above vega-embed's chart menu button (z-index 1000)
-			mb="xs"
 		/>
 	);
 }
 
-/** The picked openings that are still available, or the default top COMPARED if none are. */
-function chosen(picked: string[], options: string[]) {
-	const available = new Set(options);
-	const kept = picked.filter((o) => available.has(o));
-	return kept.length ? kept : options.slice(0, COMPARED);
-}
+/** The default pick: every ECO family, or the COMPARED most played name families. */
+const defaultPick = (grouping: Grouping, options: string[]) =>
+	grouping === "eco" ? options : options.slice(0, COMPARED);
 
 const ciLabel = (s: { lo: number; hi: number }) =>
 	`${(s.lo * 100).toFixed(1)}–${(s.hi * 100).toFixed(1)}%`;
 
 export default function Openings() {
-	const rows = useData<Row[]>("openings_by_elo.json");
+	const [grouping, setGrouping] = useState<Grouping>("eco");
+	const rows = useData<Row[]>(GROUPING_FILE[grouping]);
 	const all = useData<Row[]>("results_by_elo.json");
 	const { inRange } = useEloFilter();
 	const [picked, setPicked] = useState<string | null>(null);
 	const [side, setSide] = useState<Side>("white");
 	const [halfDraws, setHalfDraws] = useState(true);
-	const [resultsPicked, setResultsPicked] = useState<string[]>([]);
-	const [popularityPicked, setPopularityPicked] = useState<string[]>([]);
+	// One pick per grouping, so switching back and forth keeps both. null = the default pick.
+	const [picks, setPicks] = useState<Record<Grouping, string[] | null>>({
+		eco: null,
+		name: null,
+	});
+
+	// Every opening in the data, most played overall first.
+	const options = useMemo(
+		() =>
+			sumResults(rows ?? [], "opening_family")
+				.sort((a, b) => b.games - a.games)
+				.map((r) => r.opening_family),
+		[rows],
+	);
+	const selection = useMemo(() => {
+		const kept = (picks[grouping] ?? []).filter((o) => options.includes(o));
+		return kept.length ? kept : defaultPick(grouping, options);
+	}, [picks, grouping, options]);
+	const selected = useMemo(() => new Set(selection), [selection]);
 
 	const fullSpec = useMemo(() => {
 		const values = sumResults(
-			(rows ?? []).filter((r) => inRange(r.elo_bracket)),
+			(rows ?? []).filter(
+				(r) => inRange(r.elo_bracket) && selected.has(r.opening_family),
+			),
 			"opening_family",
 		)
 			.filter((r) => r.games >= MIN_GAMES)
@@ -409,7 +424,7 @@ export default function Openings() {
 			} as VisualizationSpec,
 			names: values.map((r) => r.opening_family),
 		};
-	}, [rows, all, inRange, side, halfDraws]);
+	}, [rows, all, inRange, side, halfDraws, selected]);
 
 	// Until something is clicked, show the most played opening.
 	const shown =
@@ -448,48 +463,30 @@ export default function Openings() {
 		} as VisualizationSpec;
 	}, [rows, all, shown, inRange]);
 
-	// Openings with enough games in the Elo filter, most played first.
-	const resultsRows = useMemo(
-		() =>
-			sumResults(
-				(rows ?? []).filter((r) => inRange(r.elo_bracket)),
-				"opening_family",
-			)
-				.filter((r) => r.games >= MIN_GAMES)
-				.sort((a, b) => b.games - a.games),
-		[rows, inRange],
-	);
-	const resultsOptions = useMemo(
-		() => resultsRows.map((r) => r.opening_family),
-		[resultsRows],
-	);
+	// The picked openings with enough games in the Elo filter.
 	const results = useMemo(() => {
-		const keep = new Set(chosen(resultsPicked, resultsOptions));
-		const top = resultsRows
-			.filter((r) => keep.has(r.opening_family))
+		const top = sumResults(
+			(rows ?? []).filter(
+				(r) => inRange(r.elo_bracket) && selected.has(r.opening_family),
+			),
+			"opening_family",
+		)
+			.filter((r) => r.games >= MIN_GAMES)
 			.map((r) => ({ ...r, score: scoreWithCI(r).score }));
 		return {
 			...resultsSpec,
 			data: { values: toResultRows(top) },
 		} as VisualizationSpec;
-	}, [resultsRows, resultsOptions, resultsPicked]);
+	}, [rows, inRange, selected]);
 
-	// Every opening, most played overall first.
-	const popularityOptions = useMemo(
-		() =>
-			sumResults(rows ?? [], "opening_family")
-				.sort((a, b) => b.games - a.games)
-				.map((r) => r.opening_family),
-		[rows],
-	);
 	const popularity = useMemo(() => {
 		const totals = new Map(
 			sumResults(all ?? [], "elo_bracket").map((r) => [r.elo_bracket, r.games]),
 		);
 		// Rows keep the overall popularity order, whatever order the openings were picked in.
 		const rank = new Map(
-			chosen(popularityPicked, popularityOptions)
-				.map((o) => [o, popularityOptions.indexOf(o)] as const)
+			selection
+				.map((o) => [o, options.indexOf(o)] as const)
 				.sort((a, b) => a[1] - b[1])
 				.map(([o], i) => [o, i]),
 		);
@@ -507,7 +504,7 @@ export default function Openings() {
 				bracket_label: bracketLabel(r.elo_bracket),
 			}));
 		return { ...popularitySpec, data: { values } } as VisualizationSpec;
-	}, [rows, all, inRange, popularityPicked, popularityOptions]);
+	}, [rows, all, inRange, selection, options]);
 
 	// Clicking a row (label included) picks that opening for the chart below.
 	const onEmbed = useCallback(({ view }: Result) => {
@@ -523,9 +520,17 @@ export default function Openings() {
 	return (
 		<TabSection
 			title={`Which openings are good for ${side}?`}
-			description={`Each row is an opening family, ranked by white's score (draws as half a win), from best for white at the top to best for black at the bottom. The order stays the same whatever you pick above. Openings right of the dashed line do better for ${side} than the average game. Each bar is the 95% interval for ${side}'s ${halfDraws ? "score (a draw counts as half a win)" : "win rate (draws count as nothing)"}: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden. Click a row to see that opening by rating below.`}
+			description={`Each row is an opening family (${grouping === "eco" ? "by ECO code range; Others is every code outside the ten families" : "the opening name before the colon, 40 most played"}), ranked by white's score (draws as half a win), from best for white at the top to best for black at the bottom. The order stays the same whatever you pick above. Openings right of the dashed line do better for ${side} than the average game. Each bar is the 95% interval for ${side}'s ${halfDraws ? "score (a draw counts as half a win)" : "win rate (draws count as nothing)"}: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden. Click a row to see that opening by rating below.`}
 			controls={
 				<>
+					<SegmentedControl
+						data={[
+							{ value: "eco", label: "ECO families" },
+							{ value: "name", label: "Opening names" },
+						]}
+						value={grouping}
+						onChange={(v) => setGrouping(v as Grouping)}
+					/>
 					<SegmentedControl
 						data={[
 							{ value: "white", label: "White" },
@@ -543,6 +548,11 @@ export default function Openings() {
 			}
 			loading={!rows || !all}
 		>
+			<OpeningPicker
+				options={options}
+				value={selection}
+				onChange={(v) => setPicks((p) => ({ ...p, [grouping]: v }))}
+			/>
 			<VegaEmbed
 				spec={fullSpec.spec}
 				onEmbed={onEmbed}
@@ -565,15 +575,9 @@ export default function Openings() {
 				Wins, draws and losses by opening
 			</Title>
 			<Text size="sm" c="dimmed" mb="xs">
-				By default the {COMPARED} most played openings in the Elo filter; pick
-				your own below. Best score for white on top. Only openings with at least{" "}
-				{MIN_GAMES} games in the Elo filter can be picked.
+				The openings picked above, best score for white on top. Openings with
+				fewer than {MIN_GAMES} games in the Elo filter are hidden.
 			</Text>
-			<OpeningPicker
-				options={resultsOptions}
-				value={resultsPicked}
-				onChange={setResultsPicked}
-			/>
 			<VegaEmbed spec={results} style={{ width: "100%" }} />
 			<Title order={4} mt="lg">
 				Opening popularity by rating
@@ -581,15 +585,10 @@ export default function Openings() {
 			<Text size="sm" c="dimmed" mb="xs">
 				Each cell is the share of that bracket's games played with the opening,
 				so brackets of different sizes compare fairly. Read along a row to see
-				an opening rise or fall with rating. By default the {COMPARED} most
-				played openings overall; pick your own below. Brackets with fewer than{" "}
-				{MIN_BRACKET_GAMES} games are left out.
+				an opening rise or fall with rating. Same openings as picked above, most
+				played on top. Brackets with fewer than {MIN_BRACKET_GAMES} games are
+				left out.
 			</Text>
-			<OpeningPicker
-				options={popularityOptions}
-				value={popularityPicked}
-				onChange={setPopularityPicked}
-			/>
 			<VegaEmbed spec={popularity} style={{ width: "100%" }} />
 		</TabSection>
 	);
