@@ -80,6 +80,16 @@ export function toResultRows<T extends ResultCounts>(rows: T[]) {
   )
 }
 
+/** A proportion `k / n` with its 95% Wilson interval, which stays inside [0, 1] for small shares. */
+export function shareWithCI(k: number, n: number) {
+  const z = 1.96
+  const p = k / n
+  const den = 1 + (z * z) / n
+  const center = (p + (z * z) / (2 * n)) / den
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / den
+  return { share: p, lo: center - half, hi: center + half }
+}
+
 /** White's score (win = 1, draw = ½) with a normal-approximation 95% interval. */
 export function scoreWithCI(r: ResultCounts) {
   const score = (r.white + r.draw / 2) / r.games
