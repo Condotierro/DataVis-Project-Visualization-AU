@@ -1,0 +1,18 @@
+/* Sidebar links on the dark sidebar. Mantine's light-scheme hover is a near-white
+   background, which hides the light labels, so hover is a faint tint instead. */
+.navLink {
+  border-radius: var(--mantine-radius-md);
+  color: var(--mantine-color-white);
+  font-weight: 700;
+}
+
+.navLink:hover {
+  background-color: rgba(254, 254, 254, 0.06);
+}
+
+/* The open view: orange label on a slightly stronger tint. */
+.navLink[data-active],
+.navLink[data-active]:hover {
+  color: var(--mantine-color-orange-5);
+  background-color: rgba(254, 254, 254, 0.1);
+}

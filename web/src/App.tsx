@@ -1,7 +1,8 @@
 import { AppShell, Burger, Group, NavLink, Stack, Text, Title } from '@mantine/core'
 import { useDisclosure, useHash } from '@mantine/hooks'
 import { tabs } from './tabs'
-import { ORANGE, PAGE, TEXT } from './lib/theme'
+import { PAGE, TEXT } from './lib/theme'
+import classes from './App.module.css'
 import { useData } from './lib/data'
 import { EloBrush, EloFilterProvider } from './lib/eloFilter'
 
@@ -51,15 +52,7 @@ export default function App() {
                 href={`#${t.id}`}
                 label={t.title}
                 active={t.id === active}
-                fw={700}
-                // On the dark sidebar: light labels, and the open view in orange on a faint tint.
-                styles={{
-                  root: {
-                    borderRadius: 'var(--mantine-radius-md)',
-                    color: t.id === active ? ORANGE : PAGE,
-                    background: t.id === active ? 'rgba(254, 254, 254, 0.08)' : undefined,
-                  },
-                }}
+                className={classes.navLink}
                 onClick={(e) => {
                   e.preventDefault()
                   setHash(`#${t.id}`)
