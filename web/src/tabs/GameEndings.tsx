@@ -19,7 +19,7 @@ const ending = {
   field: 'ending',
   type: 'nominal',
   title: null,
-  scale: { domain: ENDINGS, range: [INK, '#8b8780', CONTEXT, ACCENT] },
+  scale: { domain: ENDINGS, range: [INK, '#a3a29f', CONTEXT, ACCENT] },
   legend: { orient: 'top' },
 } as const
 const endingOrder = { calculate: `indexof(${JSON.stringify(ENDINGS)}, datum.ending)`, as: 'order' }

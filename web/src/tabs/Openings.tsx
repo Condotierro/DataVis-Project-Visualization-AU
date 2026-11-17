@@ -25,7 +25,7 @@ import {
 import { useData } from "../lib/data";
 import { useEloFilter } from "../lib/eloRange";
 import { TabSection } from "../lib/TabSection";
-import { PANEL, VEGA_OPTIONS } from "../lib/theme";
+import { PANEL, TRUE_BLUE, VEGA_OPTIONS } from "../lib/theme";
 
 type Row = {
 	group?: string; // ECO grouping only: "After e4 e5", "After d4", ...
@@ -231,7 +231,7 @@ const popularitySpec: VisualizationSpec = {
 			field: "share",
 			type: "quantitative",
 			title: "Share of games",
-			scale: { type: "sqrt", range: ["#3a3733", ACCENT] },
+			scale: { type: "sqrt", range: ["#eef4fb", TRUE_BLUE] },
 			legend: { format: ".0%", orient: "top" },
 		},
 		opacity: { condition: { test: "datum.inRange", value: 1 }, value: DIMMED },

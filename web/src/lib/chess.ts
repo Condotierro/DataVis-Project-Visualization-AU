@@ -1,24 +1,23 @@
 // Shared encodings so every tab colors things the same way.
 
-import { BOARD_LIGHT, LEAF } from './theme'
+import { BLUE, MUTED, PAGE, TEXT } from './theme'
 
 // One accent with one meaning across all tabs: the observed data a chart is about
 // (actual score, time forfeits, openings). Everything else is grey: CONTEXT for the
-// data it's read against, INK for helper lines (predictions, means), drawn dashed. On the dark
-// panels CONTEXT is the quiet dark grey and INK the light one.
+// data it's read against, INK for helper lines (predictions, means), drawn dashed.
 // Selections dim what's left out instead of adding a hue.
-export const ACCENT = LEAF
-export const CONTEXT = '#5a5651'
-export const INK = '#c9c6bd'
+export const ACCENT = BLUE
+export const CONTEXT = '#cfcecb'
+export const INK = MUTED
 export const DIMMED = 0.25
 
 // White/black wins use the piece colors themselves; draws sit in between. The result
 // is ordinal (score 1 / ½ / 0), so a monotone lightness ramp fits it.
 export const RESULT_DOMAIN = ['White wins', 'Draw', 'Black wins']
-export const RESULT_COLORS = [BOARD_LIGHT, '#8b8780', '#141312']
-// "Black wins" is barely darker than the dark panel, so a mid-grey outline keeps the
+export const RESULT_COLORS = [PAGE, '#a3a29f', TEXT]
+// "White wins" is barely darker than the white panel, so an INK outline keeps the
 // segment from reading as background.
-export const RESULT_MARK = { type: 'bar', stroke: '#7c7973', strokeWidth: 0.75 } as const
+export const RESULT_MARK = { type: 'bar', stroke: INK, strokeWidth: 0.75 } as const
 
 // Elo brackets are 200 wide; the ends are clipped in aggregate.py (below 800 lands in 600).
 export const bracketLabel = (b: number) => (b <= 600 ? '<800' : b >= 2800 ? '2800+' : `${b}–${b + 199}`)

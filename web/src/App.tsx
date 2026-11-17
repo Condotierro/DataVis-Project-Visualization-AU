@@ -1,6 +1,7 @@
 import { AppShell, Burger, Group, NavLink, Stack, Text, Title } from '@mantine/core'
 import { useDisclosure, useHash } from '@mantine/hooks'
 import { tabs } from './tabs'
+import { ORANGE, PAGE, TEXT } from './lib/theme'
 import { useData } from './lib/data'
 import { EloBrush, EloFilterProvider } from './lib/eloFilter'
 
@@ -26,18 +27,22 @@ export default function App() {
         navbar={{ width: 232, breakpoint: 'sm', collapsed: { mobile: !opened } }}
         padding="lg"
       >
-        <AppShell.Header bg="dark.8" withBorder={false} hiddenFrom="sm">
+        <AppShell.Header bg={TEXT} withBorder={false} hiddenFrom="sm">
           <Group h="100%" px="md" gap="sm">
-            <Burger opened={opened} onClick={toggle} size="sm" aria-label="Show views" />
+            <Burger opened={opened} onClick={toggle} size="sm" color={PAGE} aria-label="Show views" />
             <Mark />
-            <Title order={1}>ChessViz</Title>
+            <Title order={1} c={PAGE}>
+              ChessViz
+            </Title>
           </Group>
         </AppShell.Header>
 
-        <AppShell.Navbar bg="dark.8" withBorder={false} p="md">
+        <AppShell.Navbar bg={TEXT} withBorder={false} p="md">
           <Group gap="sm" mb="xl" visibleFrom="sm">
             <Mark />
-            <Title order={1}>ChessViz</Title>
+            <Title order={1} c={PAGE}>
+              ChessViz
+            </Title>
           </Group>
           <Stack gap={4}>
             {tabs.map((t) => (
@@ -46,10 +51,15 @@ export default function App() {
                 href={`#${t.id}`}
                 label={t.title}
                 active={t.id === active}
-                variant="filled"
-                color="dark.5"
                 fw={700}
-                styles={{ root: { borderRadius: 'var(--mantine-radius-md)' } }}
+                // On the dark sidebar: light labels, and the open view in orange on a faint tint.
+                styles={{
+                  root: {
+                    borderRadius: 'var(--mantine-radius-md)',
+                    color: t.id === active ? ORANGE : PAGE,
+                    background: t.id === active ? 'rgba(254, 254, 254, 0.08)' : undefined,
+                  },
+                }}
                 onClick={(e) => {
                   e.preventDefault()
                   setHash(`#${t.id}`)
@@ -59,14 +69,14 @@ export default function App() {
             ))}
           </Stack>
           {meta && (
-            <Text size="xs" c="dimmed" mt="auto" lh={1.5}>
+            <Text size="xs" c="#a3a29f" mt="auto" lh={1.5}>
               {meta.games.toLocaleString()} rated {meta.time_controls.join(', ')} games from Lichess, played{' '}
               {meta.first_date} to {meta.last_date}.
             </Text>
           )}
         </AppShell.Navbar>
 
-        <AppShell.Main maw={1180 + 232}>
+        <AppShell.Main>
           {/* Above the tab, so the brush survives switching tabs and filters all of them. */}
           <EloBrush />
           <ActiveTab key={active} />

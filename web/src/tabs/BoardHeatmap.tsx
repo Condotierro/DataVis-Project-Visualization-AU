@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Group, Paper, SegmentedControl, Select, Stack, Text } from '@mantine/core'
 import { Chessboard } from 'react-chessboard'
 import { scaleSequentialSqrt, scaleSqrt } from 'd3-scale'
-import { interpolateGreens } from 'd3-scale-chromatic'
+import { interpolateBlues } from 'd3-scale-chromatic'
 import { useData } from '../lib/data'
 import { useEloFilter } from '../lib/eloRange'
 import { TabSection } from '../lib/TabSection'
@@ -101,7 +101,7 @@ export default function BoardHeatmap() {
 
   // sqrt scale so a few very busy squares (e4, d4, ...) don't wash out the rest
   const color = useMemo(
-    () => scaleSequentialSqrt([0, Math.max(1, ...counts.values())], (t) => interpolateGreens(0.05 + 0.9 * t)),
+    () => scaleSequentialSqrt([0, Math.max(1, ...counts.values())], (t) => interpolateBlues(0.05 + 0.9 * t)),
     [counts],
   )
   const squareStyles = useMemo(
@@ -140,8 +140,10 @@ export default function BoardHeatmap() {
       }
       loading={!rows}
     >
-      <Group align="flex-start" gap="xl">
-        <div style={{ width: 'min(480px, 100%)' }}>
+      {/* The board grows with the window height, so it stays whole on screen, and sits
+          centered with its readout instead of leaving the right of the panel empty. */}
+      <Group align="flex-start" justify="center" gap="xl">
+        <div style={{ width: 'min(100%, max(320px, calc(100vh - 380px)), 640px)' }}>
           <Chessboard
             options={{
               position: EMPTY_BOARD,
@@ -154,7 +156,7 @@ export default function BoardHeatmap() {
             }}
           />
         </div>
-        <Paper bg="dark.7" p="md" miw={200}>
+        <Paper bg="var(--mantine-color-body)" p="md" miw={200}>
           <Stack gap={4}>
             {hovered ? (
               <>
