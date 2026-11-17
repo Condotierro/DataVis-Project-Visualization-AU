@@ -183,6 +183,7 @@ export default function BoardHeatmap() {
 }
 
 const LEGEND_WIDTH = 200
+const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 })
 
 /** Color ramp with count ticks placed on the same sqrt scale as the squares. */
 function Legend({
@@ -196,7 +197,6 @@ function Legend({
 }) {
   const [, max] = color.domain()
   const x = scaleSqrt([0, max], [0, LEGEND_WIDTH])
-  const format = x.tickFormat(3, '~s')
   const ramp = Array.from({ length: 11 }, (_, i) => `${color.interpolator()(i / 10)} ${i * 10}%`).join(', ')
   return (
     <Stack gap={2} mt="md">
@@ -208,13 +208,15 @@ function Legend({
           <div style={{ position: 'absolute', left: x(hovered) - 1, top: -3, width: 2, height: 18, background: '#000' }} />
         )}
       </div>
-      <div style={{ position: 'relative', width: LEGEND_WIDTH, height: 16 }}>
-        {x.ticks(3).map((t) => (
-          <Text key={t} size="xs" c="dimmed" style={{ position: 'absolute', left: x(t), transform: 'translateX(-50%)' }}>
-            {t === 0 ? '0' : format(t)}
-          </Text>
-        ))}
-      </div>
+      {/* Just the two ends: zero and the busiest square. */}
+      <Group justify="space-between" w={LEGEND_WIDTH}>
+        <Text size="xs" c="dimmed">
+          0
+        </Text>
+        <Text size="xs" c="dimmed">
+          {COMPACT.format(max)}
+        </Text>
+      </Group>
     </Stack>
   )
 }
