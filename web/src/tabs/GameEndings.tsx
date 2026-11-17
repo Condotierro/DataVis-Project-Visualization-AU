@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { SegmentedControl } from '@mantine/core'
+import { Group, SegmentedControl, Text } from '@mantine/core'
 import { useElementSize } from '@mantine/hooks'
 import { VegaEmbed } from 'react-vega'
 import type { Result, VisualizationSpec } from 'vega-embed'
@@ -266,7 +266,15 @@ export default function GameEndings() {
     <TabSection
       title="How do games end?"
       description={`In 3-minute games many are decided by the clock, not the board. A decisive game that ends without mate or a flag counts as a resignation. Click a rating or an opening to filter the other charts; click it again, or empty space in that chart, to reset it. Groups with fewer than ${MIN_BRACKET_GAMES} games are left out of the top charts, and lengths with fewer than ${MIN_GAMES} from the share view. The length chart stops at ${cut.last + MOVES_BIN - 1} moves; the ${cut.hidden.toLocaleString('en')} longer games (under ${TAIL * 100}% of all) are too few to show.`}
-      controls={
+      loading={!rows}
+    >
+      <div ref={ref}>
+        {container > 0 && <VegaEmbed spec={fullSpec} onEmbed={onEmbed} style={{ width: '100%' }} />}
+      </div>
+      {/* Under the length chart, the only one it changes. It can't sit between the panels: they
+          are one Vega spec, so that clicks in one filter the others. */}
+      <Group gap="sm">
+        <Text size="sm">Length chart shows</Text>
         <SegmentedControl
           data={[
             { value: 'count', label: 'Game counts' },
@@ -275,12 +283,7 @@ export default function GameEndings() {
           value={scale}
           onChange={setScale}
         />
-      }
-      loading={!rows}
-    >
-      <div ref={ref}>
-        {container > 0 && <VegaEmbed spec={fullSpec} onEmbed={onEmbed} style={{ width: '100%' }} />}
-      </div>
+      </Group>
     </TabSection>
   )
 }

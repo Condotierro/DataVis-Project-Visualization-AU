@@ -4,10 +4,10 @@ import { useElementSize } from '@mantine/hooks'
 import { VegaEmbed } from 'react-vega'
 import type { Result, VisualizationSpec } from 'vega-embed'
 import { useData } from './data'
-import { CONTEXT, INK, bracketLabel, bracketLabelExpr, sumResults } from './chess'
+import { CONTEXT, ELO_BANDS, INK, bandIndex, sumResults } from './chess'
 import { EloContext, type Range } from './eloRange'
 
-// The global Elo filter: a brushable histogram of games per bracket, and the provider
+// The global Elo filter: a brushable histogram of games per Elo range (ELO_BANDS), and the provider
 // that shares the picked range with every tab (read it with useEloFilter()).
 
 export function EloFilterProvider({ children }: { children: ReactNode }) {
@@ -26,29 +26,45 @@ type Row = { elo_bracket: number; games: number; white: number; draw: number; bl
 const spec: VisualizationSpec = {
   $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
   data: { name: 'table' }, // placeholder, filled in below
-  height: 60,
-  transform: [
-    { calculate: 'datum.elo_bracket + 200', as: 'end' },
-    { calculate: bracketLabelExpr('datum.elo_bracket'), as: 'label' },
-  ],
-  // Bars span their bracket on a quantitative axis, so the brush can be dragged freely.
+  height: 120,
+  // The width passed in is the whole box; the y axis has to fit inside it.
+  autosize: { type: 'fit-x', contains: 'padding' },
+  transform: [{ calculate: 'datum.band + 1', as: 'end' }],
+  // One equal-width bar per range: the ranges differ in Elo width, so on a true Elo axis bar area
+  // wouldn't match game counts. The axis is the range index, quantitative so the brush drags freely.
   mark: { type: 'bar', stroke: 'white', strokeWidth: 1, cursor: 'col-resize' },
   encoding: {
     x: {
-      field: 'elo_bracket',
+      field: 'band',
       type: 'quantitative',
-      scale: { domain: [600, 3000], nice: false },
+      scale: { domain: [0, ELO_BANDS.length], nice: false },
       title: null,
-      axis: { values: [800, 1200, 1600, 2000, 2400, 2800], labelExpr: "datum.value + ''" },
+      axis: {
+        values: ELO_BANDS.map((_, i) => i + 0.5),
+        labelExpr: `${JSON.stringify(ELO_BANDS.map((b) => b.label))}[floor(datum.value)]`,
+        ticks: false,
+      },
     },
     x2: { field: 'end' },
-    y: { field: 'games', type: 'quantitative', title: null, axis: null },
+    y: {
+      field: 'games',
+      type: 'quantitative',
+      title: 'Games',
+      // Thousands as "k" (40k), and a plain 0.
+      axis: {
+        tickCount: 4,
+        labelExpr: "datum.value ? format(datum.value / 1000, '~d') + 'k' : '0'",
+        domain: false,
+        ticks: false,
+        gridColor: '#eceae4',
+      },
+    },
     y2: { datum: 0 }, // with x2 set, bars need an explicit base
     // Selection by lightness, not hue: the accent is kept for the data itself.
-    // Same rule as snap(): a bracket is in when the brush covers its middle.
+    // Same rule as snap(): a range is in when the brush covers its middle.
     color: {
       condition: {
-        test: '!brush.elo_bracket || inrange(datum.elo_bracket + 100, brush.elo_bracket)',
+        test: '!brush.band || inrange(datum.band + 0.5, brush.band)',
         value: INK,
       },
       value: CONTEXT,
@@ -61,19 +77,16 @@ const spec: VisualizationSpec = {
   config: { view: { stroke: null } },
 }
 
-/** Snap a dragged interval to the brackets whose middle it covers. */
+/** Snap a dragged interval to the ranges whose middle it covers, as 200-wide bracket starts. */
 function snap(interval: [number, number] | undefined): Range {
   if (!interval) return null
   const [a, b] = interval[0] < interval[1] ? interval : [interval[1], interval[0]]
-  const starts = [600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800].filter(
-    (s) => s + 100 >= a && s + 100 <= b,
-  )
-  return starts.length ? { lo: starts[0], hi: starts[starts.length - 1] } : null
+  const picked = ELO_BANDS.filter((_, i) => i + 0.5 >= a && i + 0.5 <= b)
+  return picked.length ? { lo: picked[0].lo, hi: picked[picked.length - 1].hi } : null
 }
 
 function rangeLabel(range: Range) {
   if (!range) return 'All ratings'
-  if (range.lo === range.hi) return `Elo ${bracketLabel(range.lo)}`
   const from = range.lo > 600 ? range.lo : null // the ends are open (see bracketLabel)
   const to = range.hi < 2800 ? range.hi + 199 : null
   if (from && to) return `Elo ${from}–${to}`
@@ -89,6 +102,14 @@ export function EloBrush() {
   const { ref, width } = useElementSize()
 
   const brackets = useMemo(() => sumResults(rows ?? [], 'elo_bracket'), [rows])
+  const bands = useMemo(
+    () =>
+      sumResults(
+        brackets.map((r) => ({ ...r, band: bandIndex(r.elo_bracket) })),
+        'band',
+      ).map((r) => ({ band: r.band, games: r.games, label: ELO_BANDS[r.band].label })),
+    [brackets],
+  )
   // The picked range lives in React state, not in the chart: whenever the chart is
   // re-embedded (resize, reset) the brush is redrawn from it, snapped to whole brackets.
   // `range` is left out of the deps on purpose, so brushing itself doesn't re-embed.
@@ -96,15 +117,15 @@ export function EloBrush() {
     const brush = {
       name: 'brush',
       select: { type: 'interval', encodings: ['x'] },
-      ...(range && { value: { x: [range.lo, range.hi + 200] } }),
+      ...(range && { value: { x: [bandIndex(range.lo), bandIndex(range.hi) + 1] } }),
     }
-    return { ...spec, width, params: [brush], data: { values: brackets } } as VisualizationSpec
+    return { ...spec, width, params: [brush], data: { values: bands } } as VisualizationSpec
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brackets, width, resetKey])
+  }, [bands, width, resetKey])
 
   const onEmbed = useCallback(
     ({ view }: Result) =>
-      view.addSignalListener('brush', (_, value: { elo_bracket?: [number, number] }) => setRange(snap(value.elo_bracket))),
+      view.addSignalListener('brush', (_, value: { band?: [number, number] }) => setRange(snap(value.band))),
     [setRange],
   )
 

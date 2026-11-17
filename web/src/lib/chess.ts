@@ -23,6 +23,19 @@ export const bracketLabel = (b: number) => (b <= 600 ? '<800' : b >= 2800 ? '280
 export const bracketLabelExpr = (field: string, full = true) =>
   `${field} <= 600 ? '<800' : ${field} >= 2800 ? '2800+' : ${full ? `${field} + '–' + (${field} + 199)` : `${field} + ''`}`
 
+// Coarser Elo ranges for the header filter and "Who wins, by rating?". `lo` and `hi` are the
+// first and last 200-wide bracket each holds; every boundary is a multiple of 200, so each
+// bracket falls entirely inside one range.
+export const ELO_BANDS = [
+  { label: 'Under 1000', lo: 600, hi: 800 },
+  { label: '1000–1399', lo: 1000, hi: 1200 },
+  { label: '1400–1799', lo: 1400, hi: 1600 },
+  { label: '1800–2199', lo: 1800, hi: 2000 },
+  { label: '2200 and over', lo: 2200, hi: 2800 },
+]
+/** Index into ELO_BANDS of the range holding a 200-wide bracket. */
+export const bandIndex = (bracket: number) => ELO_BANDS.findIndex((b) => bracket <= b.hi)
+
 // Groups with fewer games are too noisy to plot.
 export const MIN_GAMES = 30
 // Same idea for the share of a whole group (2800+ has only 54 games).

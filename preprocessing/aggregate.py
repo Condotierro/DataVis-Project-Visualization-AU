@@ -25,10 +25,23 @@ from openings import opening_name
 
 ELO_BIN = 200
 TOP_OPENINGS = 40  # enough points for the openings scatterplot
-GAP_BIN = 25  # rating gap (white - black) bin width
-MAX_GAP = 400  # games with a wider gap are too rare per bin; dropped, not clipped
 BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap and in game endings
 MOVES_BIN = 5  # game length bin width, in full moves
+
+# The opening families the group settled on, by ECO range (both ends inclusive). Every other
+# code, A00 included, goes to "Others". The Openings tab can switch to these from name families.
+ECO_FAMILIES = [
+    ("Sicilian", "B20", "B99"),
+    ("Caro-Kann", "B10", "B19"),
+    ("French", "C00", "C19"),
+    ("Italian", "C50", "C59"),
+    ("Spanish (Ruy Lopez)", "C60", "C99"),
+    ("Queen's Gambit", "D06", "D69"),
+    ("Queen's Indian", "E12", "E19"),
+    ("King's Indian", "E60", "E99"),
+    ("English", "A10", "A39"),
+    ("Dutch", "A80", "A99"),
+]
 
 
 def read_sample_csv(path: Path) -> pl.DataFrame:
@@ -108,16 +121,21 @@ def openings_by_elo(games: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def rating_gap(games: pl.LazyFrame) -> pl.DataFrame:
-    """Results by rating gap, to compare against the score the Elo formula predicts."""
-    gap = pl.col("white_elo").cast(pl.Int32) - pl.col("black_elo")
+def eco_family() -> pl.Expr:
+    (name, lo, hi), *rest = ECO_FAMILIES
+    expr = pl.when(pl.col("eco").is_between(pl.lit(lo), pl.lit(hi))).then(pl.lit(name))
+    for name, lo, hi in rest:
+        expr = expr.when(pl.col("eco").is_between(pl.lit(lo), pl.lit(hi))).then(pl.lit(name))
+    return expr.otherwise(pl.lit("Others"))
+
+
+def openings_by_eco(games: pl.LazyFrame) -> pl.DataFrame:
+    """Like openings_by_elo, but grouped into ECO_FAMILIES (named opening_family so the app reads both alike)."""
     return (
-        games.filter(gap.abs() < MAX_GAP + GAP_BIN // 2)
-        # Bins centered on multiples of GAP_BIN, so a gap of 0 is its own bin.
-        .with_columns(gap=((gap + GAP_BIN // 2) // GAP_BIN * GAP_BIN))
-        .group_by("gap", "elo_bracket")
+        games.with_columns(opening_family=eco_family())
+        .group_by("opening_family", "elo_bracket")
         .agg(result_counts())
-        .sort("gap", "elo_bracket")
+        .sort("opening_family", "elo_bracket")
         .collect()
     )
 
@@ -284,6 +302,7 @@ def main() -> None:
     games = with_common_columns(load_games(args.games)).cache()
     write_json(results_by_elo(games), args.out / "results_by_elo.json")
     write_json(openings_by_elo(games), args.out / "openings_by_elo.json")
+    write_json(openings_by_eco(games), args.out / "openings_by_eco.json")
     write_json(square_heatmap(games), args.out / "square_heatmap.json")
     # The board for single openings, picked in the app; "All openings" uses the file above.
     write_json(
@@ -291,7 +310,6 @@ def main() -> None:
         args.out / "square_heatmap_openings.json",
     )
     write_json(square_events(games), args.out / "square_events.json")
-    write_json(rating_gap(games), args.out / "rating_gap.json")
     write_json(game_endings(games), args.out / "game_endings.json")
 
     meta = games.select(

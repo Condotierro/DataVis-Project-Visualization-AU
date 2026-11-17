@@ -1,0 +1,21 @@
+﻿Group,Opening Family,ECO Codes,Games,Share of Sample (%)
+After e4 e5,"Knights games: Philidor, Petrov, Scotch, Four Knights",C40-C49,8455,8.46
+After e4 e5,"King's Pawn Game, Center, Bishop's & Vienna",C20-C29,6347,6.35
+After e4 e5,Italian Game,C50-C59,3408,3.41
+After e4 e5,Ruy Lopez,C60-C99,1482,1.48
+After e4 e5,King's Gambit,C30-C39,1466,1.47
+After e4 other replies,Sicilian Defense,B20-B99,10282,10.28
+After e4 other replies,French Defense,C00-C19,6890,6.89
+After e4 other replies,Scandinavian Defense,B01,6037,6.04
+After e4 other replies,Caro-Kann Defense,B10-B19,5638,5.64
+After e4 other replies,"Modern, Pirc & Alekhine",B02-B09,4018,4.02
+After e4 other replies,"Other replies to e4 (B00: Nimzowitsch, Owen...)",B00,4704,4.70
+After d4,Queen's Pawn Game & London System,"A40-A41, A45-A46, D00-D05",17024,17.02
+After d4,Queen's Gambit & Slav,D06-D69,5206,5.21
+After d4,"Indian defences, Benoni & Grunfeld","A47-A79, D70-D99, E10-E99",2777,2.78
+After d4,"Other d4 openings (Dutch, Catalan, Old Benoni...)","A42-A44, A80-A99, E00-E09",1838,1.84
+Irregulars,Uncommon openings (A00),A00,5626,5.63
+Irregulars,English Opening,A10-A39,3161,3.16
+Irregulars,Reti & Zukertort,A04-A09,2987,2.99
+Irregulars,Larsen & Bird,A01-A03,2654,2.65
+,TOTAL,A00-E99,100000,100

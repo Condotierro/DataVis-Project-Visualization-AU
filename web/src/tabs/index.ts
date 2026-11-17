@@ -2,7 +2,6 @@ import type { ComponentType } from 'react'
 import ResultsByElo from './ResultsByElo'
 import Openings from './Openings'
 import BoardHeatmap from './BoardHeatmap'
-import RatingGap from './RatingGap'
 import GameEndings from './GameEndings'
 
 // To add a visualization: copy _Template.tsx, then add one line here.
@@ -11,6 +10,5 @@ export const tabs: { id: string; title: string; component: ComponentType }[] = [
   { id: 'results', title: 'Results by Elo', component: ResultsByElo },
   { id: 'openings', title: 'Openings', component: Openings },
   { id: 'board', title: 'Board heatmap', component: BoardHeatmap },
-  { id: 'rating-gap', title: 'Rating gap', component: RatingGap },
   { id: 'endings', title: 'How games end', component: GameEndings },
 ]

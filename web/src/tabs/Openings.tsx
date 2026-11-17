@@ -5,15 +5,13 @@ import {
 	Text,
 	Title,
 } from "@mantine/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { VegaEmbed } from "react-vega";
-import type { View } from "vega";
-import type { Result, VisualizationSpec } from "vega-embed";
+import type { VisualizationSpec } from "vega-embed";
 import {
 	ACCENT,
-	bracketLabel,
-	bracketLabelExpr,
-	CONTEXT,
+	bandIndex,
+	ELO_BANDS,
 	DIMMED,
 	INK,
 	MIN_BRACKET_GAMES,
@@ -44,28 +42,25 @@ type Side = "white" | "black";
 const SIDE_NAME = { white: "White", black: "Black" } as const;
 
 type Counts = { white: number; draw: number; black: number; games: number };
-// The chosen side's score with its 95% interval. With halfDraws, a draw is worth ½ (the chess
-// score, and black's is the complement of white's); without, it's the plain win rate.
-function sideScore(r: Counts, side: Side, halfDraws: boolean) {
+// The chosen side's win rate (draws count as nothing) with its 95% interval.
+function winRate(r: Counts, side: Side) {
 	const wins = side === "white" ? r.white : r.black;
-	const losses = side === "white" ? r.black : r.white;
-	return scoreWithCI({
-		white: wins,
-		draw: halfDraws ? r.draw : 0,
-		black: losses,
-		games: r.games,
-	});
+	return scoreWithCI({ white: wins, draw: 0, black: r.games - wins, games: r.games });
 }
 
-// Forest plot: one row per opening, sorted by the chosen side's score, so the ranking answers
+// Sort key for both charts: white's wins minus black's, as a share of games. Best for white
+// ranks first and best for black last, whichever side is shown.
+const whiteEdge = (r: Counts) => (r.white - r.black) / r.games;
+
+// Forest plot: one row per opening, sorted by how much it favors white, so the ranking answers
 // the question directly and every opening is named. Popularity is left to the tooltip; the
 // width of the interval already shows how much data an opening has.
-const rankingTooltip = (side: Side, halfDraws: boolean) => [
+const rankingTooltip = (side: Side) => [
 	{ field: "opening_family", title: "Opening" },
 	{ field: "games", title: "Games", format: "," },
 	{
 		field: "score",
-		title: `${SIDE_NAME[side]}'s ${halfDraws ? "score" : "win rate"}`,
+		title: `${SIDE_NAME[side]}'s win rate`,
 		format: ".1%",
 	},
 	{ field: "ci", title: "95% interval" },
@@ -74,17 +69,15 @@ const rankingTooltip = (side: Side, halfDraws: boolean) => [
 	{ field: "black_share", title: "Black wins", format: ".1%" },
 ];
 
-// The ranking itself: rows sorted by white's score in both views, so toggling the side keeps
-// every opening in its row. Best for white on top, best for black at the bottom. (Sorting by
-// the average of both sides' scores wouldn't work: the two always sum to 100%.)
+// The ranking itself: rows sorted by whiteEdge in both views, so toggling the side keeps every
+// opening in its row. Best for white on top, best for black at the bottom.
 const y = {
 	field: "opening_family",
 	type: "nominal",
 	title: null,
-	sort: { field: "white_score", order: "descending" },
+	sort: { field: "edge", order: "descending" },
 	axis: {
-		labelFontWeight: { expr: "datum.value === shown ? 'bold' : 'normal'" },
-		labelColor: { expr: `datum.value === shown ? '${INK}' : '#4a4944'` },
+		labelColor: "#4a4944",
 		ticks: false,
 		domain: false,
 		labelPadding: 6,
@@ -94,47 +87,31 @@ const y = {
 
 const rankingSpec = (
 	side: Side,
-	halfDraws: boolean,
-	tooltip = rankingTooltip(side, halfDraws),
+	tooltip = rankingTooltip(side),
 ): VisualizationSpec => ({
 	$schema: "https://vega.github.io/schema/vega-lite/v6.json",
 	data: { name: "table" }, // placeholder, filled in below
 	width: "container",
 	height: { step: ROW },
-	// The opening shown in the chart below. Set on the live view, not in the spec, so picking
-	// one doesn't re-embed the chart (which empties it for a moment and makes the page jump).
-	params: [{ name: "shown", value: null }],
 	layer: [
 		{
-			// Row band, reaching left under the axis label: a big click/hover target, and a light
-			// background for the picked opening. (Vega axis labels don't take pointer events.)
-			mark: { type: "rect", cursor: "pointer" },
+			// Invisible row band, reaching left under the axis label: a big hover target for the
+			// tooltip. (Vega axis labels don't take pointer events.)
+			mark: { type: "rect", color: "white", opacity: 0.001 },
 			encoding: {
 				y,
 				x: { value: -LABEL_WIDTH },
 				x2: { value: "width" },
-				color: {
-					condition: {
-						test: "datum.opening_family === shown",
-						value: "#eceae4",
-					},
-					value: "white",
-				},
-				opacity: {
-					condition: { test: "datum.opening_family === shown", value: 1 },
-					value: 0.001,
-				},
 				tooltip,
 			},
 		},
 		{
-			// 95% interval as a floating bar: where the side's score for this opening plausibly lies.
+			// 95% interval as a floating bar: where the side's win rate for this opening plausibly lies.
 			mark: {
 				type: "bar",
 				color: ACCENT,
 				height: { band: 0.65 },
 				cornerRadius: 2,
-				cursor: "pointer",
 				clip: true,
 			},
 			encoding: {
@@ -142,12 +119,10 @@ const rankingSpec = (
 				x: {
 					field: "lo",
 					type: "quantitative",
-					// Fixed 40–60% in every view, centered on 50% (the even score), so switching side or
-					// draw rule never rescales the axis. Bars reaching past the edges are clipped.
+					// Fixed 40–60% for both sides, so switching side never rescales the axis. Bars
+					// reaching past the edges are clipped.
 					scale: { domain: [0.4, 0.6], nice: false },
-					title: halfDraws
-						? `${SIDE_NAME[side]}'s score (win = 1, draw = ½)`
-						: `${SIDE_NAME[side]}'s win rate`,
+					title: `${SIDE_NAME[side]}'s win rate`,
 					axis: { format: ".0%", orient: "top", tickCount: 8 },
 				},
 				x2: { field: "hi" },
@@ -180,63 +155,15 @@ const rankingSpec = (
 	],
 });
 
-// One opening across Elo brackets: does it work better for weaker or stronger players?
-// Same score as the ranking above (on y here). The all-games score per bracket is in the tooltip.
-const detailSpec: VisualizationSpec = {
-	$schema: "https://vega.github.io/schema/vega-lite/v6.json",
-	data: { name: "table" }, // placeholder, filled in below
-	width: "container",
-	height: 240,
-	encoding: {
-		x: {
-			field: "elo_bracket",
-			type: "ordinal",
-			title: "Average Elo of both players",
-			axis: {
-				labelExpr: bracketLabelExpr("datum.value", false),
-				labelAngle: 0,
-			},
-		},
-		y: {
-			type: "quantitative",
-			scale: { zero: false },
-			title: "White's score",
-			axis: { format: ".0%" },
-		},
-		// The x axis is Elo itself, so brackets outside the global filter are dimmed, not removed.
-		opacity: { condition: { test: "datum.inRange", value: 1 }, value: DIMMED },
-	},
-	layer: [
-		{
-			mark: { type: "rule", color: CONTEXT, strokeWidth: 1.5 },
-			encoding: { y: { field: "lo" }, y2: { field: "hi" } },
-		},
-		{
-			mark: { type: "line", color: ACCENT, strokeWidth: 2 },
-			encoding: { y: { field: "score" }, opacity: { value: 1 } },
-		},
-		{
-			mark: { type: "circle", color: ACCENT, size: 60, opacity: 1 },
-			encoding: {
-				y: { field: "score" },
-				tooltip: [
-					{ field: "bracket_label", title: "Elo bracket" },
-					{ field: "score", title: "White's score", format: ".1%" },
-					{ field: "ci", title: "95% interval" },
-					{ field: "overall", title: "All games", format: ".1%" },
-					{ field: "games", title: "Games", format: "," },
-				],
-			},
-		},
-	],
-};
-
-const DETAIL_MIN_HEIGHT = 290; // a bit over the detail chart's rendered height (plot + axis + padding, ~287 px)
-
-const COMPARED = 15; // default for the two comparison charts: this many most played openings
+const COMPARED = 15; // default pick with name families: this many most played openings
 const COMPARED_ROW = 24; // px per opening in the two comparison charts
 
-// White wins, draws and black wins, for what the score above folds into one number.
+// Two ways to group openings: the group's ECO families (openings_by_eco.json, 10 families plus
+// Others) or the opening name before the ":" (openings_by_elo.json, the 40 most played).
+type Grouping = "eco" | "name";
+const GROUPING_FILE = { eco: "openings_by_eco.json", name: "openings_by_elo.json" } as const;
+
+// White wins, draws and black wins: the full split behind the win rates above.
 const resultsSpec: VisualizationSpec = {
 	$schema: "https://vega.github.io/schema/vega-lite/v6.json",
 	data: { name: "table" }, // placeholder, filled in below
@@ -248,7 +175,7 @@ const resultsSpec: VisualizationSpec = {
 			field: "opening_family",
 			type: "nominal",
 			title: null,
-			sort: { field: "score", order: "descending" },
+			sort: { field: "edge", order: "descending" },
 		},
 		x: {
 			field: "count",
@@ -268,7 +195,7 @@ const resultsSpec: VisualizationSpec = {
 	},
 };
 
-// Openings x brackets. The color is the opening's share of that bracket, on a sqrt scale
+// Openings x Elo ranges (ELO_BANDS, as in the header filter). The color is the opening's share of that bracket, on a sqrt scale
 // so that one very common opening doesn't wash out the differences among the others.
 const popularitySpec: VisualizationSpec = {
 	$schema: "https://vega.github.io/schema/vega-lite/v6.json",
@@ -278,13 +205,11 @@ const popularitySpec: VisualizationSpec = {
 	mark: { type: "rect", stroke: "white", strokeWidth: 1 },
 	encoding: {
 		x: {
-			field: "elo_bracket",
+			field: "band",
 			type: "ordinal",
+			sort: ELO_BANDS.map((b) => b.label),
 			title: "Average Elo of both players",
-			axis: {
-				labelExpr: bracketLabelExpr("datum.value", false),
-				labelAngle: 0,
-			},
+			axis: { labelAngle: 0 },
 		},
 		y: {
 			field: "opening_family",
@@ -302,34 +227,28 @@ const popularitySpec: VisualizationSpec = {
 		opacity: { condition: { test: "datum.inRange", value: 1 }, value: DIMMED },
 		tooltip: [
 			{ field: "opening_family", title: "Opening" },
-			{ field: "bracket_label", title: "Elo bracket" },
-			{ field: "share", title: "Share of bracket", format: ".1%" },
+			{ field: "band", title: "Elo range" },
+			{ field: "share", title: "Share of range", format: ".1%" },
 			{ field: "games", title: "Games", format: "," },
 		],
 	},
 };
 
 /**
- * Picks the openings for a comparison chart. `options` are sorted by games, most played first;
- * with nothing picked the chart falls back to the first COMPARED of them.
+ * Picks the openings every chart in the tab shows. `options` are sorted by games, most played
+ * first. Clearing it goes back to the default pick.
  */
 function OpeningPicker(props: {
 	options: string[];
 	value: string[];
 	onChange: (v: string[]) => void;
 }) {
-	// Hide picks the Elo filter has since ruled out; they come back if the filter widens again.
-	const value = props.value.filter((o) => props.options.includes(o));
 	return (
 		<MultiSelect
+			label="Openings to include"
 			data={props.options}
-			value={value}
+			value={props.value}
 			onChange={props.onChange}
-			placeholder={
-				value.length
-					? undefined
-					: `${COMPARED} most played (default). Pick openings to compare`
-			}
 			searchable
 			clearable
 			// Picked openings stay in the list as ticked checkboxes; clicking one again unticks it.
@@ -346,46 +265,58 @@ function OpeningPicker(props: {
 			nothingFoundMessage="No opening with that name"
 			maxDropdownHeight={280}
 			comboboxProps={{ zIndex: 1100 }} // above vega-embed's chart menu button (z-index 1000)
-			mb="xs"
 		/>
 	);
 }
 
-/** The picked openings that are still available, or the default top COMPARED if none are. */
-function chosen(picked: string[], options: string[]) {
-	const available = new Set(options);
-	const kept = picked.filter((o) => available.has(o));
-	return kept.length ? kept : options.slice(0, COMPARED);
-}
+/** The default pick: every ECO family, or the COMPARED most played name families. */
+const defaultPick = (grouping: Grouping, options: string[]) =>
+	grouping === "eco" ? options : options.slice(0, COMPARED);
 
 const ciLabel = (s: { lo: number; hi: number }) =>
 	`${(s.lo * 100).toFixed(1)}–${(s.hi * 100).toFixed(1)}%`;
 
 export default function Openings() {
-	const rows = useData<Row[]>("openings_by_elo.json");
+	const [grouping, setGrouping] = useState<Grouping>("eco");
+	const rows = useData<Row[]>(GROUPING_FILE[grouping]);
 	const all = useData<Row[]>("results_by_elo.json");
 	const { inRange } = useEloFilter();
-	const [picked, setPicked] = useState<string | null>(null);
 	const [side, setSide] = useState<Side>("white");
-	const [halfDraws, setHalfDraws] = useState(true);
-	const [resultsPicked, setResultsPicked] = useState<string[]>([]);
-	const [popularityPicked, setPopularityPicked] = useState<string[]>([]);
+	// One pick per grouping, so switching back and forth keeps both. null = the default pick.
+	const [picks, setPicks] = useState<Record<Grouping, string[] | null>>({
+		eco: null,
+		name: null,
+	});
+
+	// Every opening in the data, most played overall first.
+	const options = useMemo(
+		() =>
+			sumResults(rows ?? [], "opening_family")
+				.sort((a, b) => b.games - a.games)
+				.map((r) => r.opening_family),
+		[rows],
+	);
+	const selection = useMemo(() => {
+		const kept = (picks[grouping] ?? []).filter((o) => options.includes(o));
+		return kept.length ? kept : defaultPick(grouping, options);
+	}, [picks, grouping, options]);
+	const selected = useMemo(() => new Set(selection), [selection]);
 
 	const fullSpec = useMemo(() => {
 		const values = sumResults(
-			(rows ?? []).filter((r) => inRange(r.elo_bracket)),
+			(rows ?? []).filter(
+				(r) => inRange(r.elo_bracket) && selected.has(r.opening_family),
+			),
 			"opening_family",
 		)
 			.filter((r) => r.games >= MIN_GAMES)
 			.sort((a, b) => b.games - a.games)
 			.map((r) => {
-				const s = sideScore(r, side, halfDraws);
+				const s = winRate(r, side);
 				return {
 					...r,
 					...s,
-					// Sort key: white's chess score, whatever side and draw rule are shown, so the rows
-					// never move when the controls change.
-					white_score: scoreWithCI(r).score,
+					edge: whiteEdge(r),
 					ci: ciLabel(s),
 					white_share: r.white / r.games,
 					draw_share: r.draw / r.games,
@@ -399,133 +330,78 @@ export default function Openings() {
 				.map((r) => ({ ...r, key: 0 })),
 			"key",
 		);
-		const avg = total ? sideScore(total, side, halfDraws).score : null;
+		const avg = total ? winRate(total, side).score : null;
 		const mean = avg === null ? [] : [{ score: avg }];
 		return {
-			spec: {
-				...rankingSpec(side, halfDraws),
-				datasets: { mean },
-				data: { values },
-			} as VisualizationSpec,
-			names: values.map((r) => r.opening_family),
-		};
-	}, [rows, all, inRange, side, halfDraws]);
-
-	// Until something is clicked, show the most played opening.
-	const shown =
-		picked && fullSpec.names.includes(picked) ? picked : fullSpec.names[0];
-
-	// Highlight the shown row on the live view, on every change and after every re-embed.
-	const viewRef = useRef<View | null>(null);
-	const shownRef = useRef(shown);
-	useEffect(() => {
-		shownRef.current = shown;
-		viewRef.current?.signal("shown", shown ?? null).run();
-	}, [shown]);
-	const detail = useMemo(() => {
-		const overall = new Map(
-			sumResults(all ?? [], "elo_bracket").map((r) => [
-				r.elo_bracket,
-				scoreWithCI(r).score,
-			]),
-		);
-		const values = (rows ?? [])
-			.filter((r) => r.opening_family === shown && r.games >= MIN_GAMES)
-			.map((r) => {
-				const s = scoreWithCI(r);
-				return {
-					...r,
-					...s,
-					ci: ciLabel(s),
-					overall: overall.get(r.elo_bracket),
-					inRange: inRange(r.elo_bracket),
-					bracket_label: bracketLabel(r.elo_bracket),
-				};
-			});
-		return {
-			...detailSpec,
+			...rankingSpec(side),
+			datasets: { mean },
 			data: { values },
 		} as VisualizationSpec;
-	}, [rows, all, shown, inRange]);
+	}, [rows, all, inRange, side, selected]);
 
-	// Openings with enough games in the Elo filter, most played first.
-	const resultsRows = useMemo(
-		() =>
-			sumResults(
-				(rows ?? []).filter((r) => inRange(r.elo_bracket)),
-				"opening_family",
-			)
-				.filter((r) => r.games >= MIN_GAMES)
-				.sort((a, b) => b.games - a.games),
-		[rows, inRange],
-	);
-	const resultsOptions = useMemo(
-		() => resultsRows.map((r) => r.opening_family),
-		[resultsRows],
-	);
+	// The picked openings with enough games in the Elo filter.
 	const results = useMemo(() => {
-		const keep = new Set(chosen(resultsPicked, resultsOptions));
-		const top = resultsRows
-			.filter((r) => keep.has(r.opening_family))
-			.map((r) => ({ ...r, score: scoreWithCI(r).score }));
+		const top = sumResults(
+			(rows ?? []).filter(
+				(r) => inRange(r.elo_bracket) && selected.has(r.opening_family),
+			),
+			"opening_family",
+		)
+			.filter((r) => r.games >= MIN_GAMES)
+			.map((r) => ({ ...r, edge: whiteEdge(r) }));
 		return {
 			...resultsSpec,
 			data: { values: toResultRows(top) },
 		} as VisualizationSpec;
-	}, [resultsRows, resultsOptions, resultsPicked]);
+	}, [rows, inRange, selected]);
 
-	// Every opening, most played overall first.
-	const popularityOptions = useMemo(
-		() =>
-			sumResults(rows ?? [], "opening_family")
-				.sort((a, b) => b.games - a.games)
-				.map((r) => r.opening_family),
-		[rows],
-	);
 	const popularity = useMemo(() => {
-		const totals = new Map(
-			sumResults(all ?? [], "elo_bracket").map((r) => [r.elo_bracket, r.games]),
-		);
+		const band = (r: Row) => ELO_BANDS[bandIndex(r.elo_bracket)];
+		const totals = new Map<string, number>();
+		for (const r of all ?? [])
+			totals.set(band(r).label, (totals.get(band(r).label) ?? 0) + r.games);
 		// Rows keep the overall popularity order, whatever order the openings were picked in.
 		const rank = new Map(
-			chosen(popularityPicked, popularityOptions)
-				.map((o) => [o, popularityOptions.indexOf(o)] as const)
+			selection
+				.map((o) => [o, options.indexOf(o)] as const)
 				.sort((a, b) => a[1] - b[1])
 				.map(([o], i) => [o, i]),
 		);
-		const values = (rows ?? [])
-			.filter(
-				(r) =>
-					rank.has(r.opening_family) &&
-					(totals.get(r.elo_bracket) ?? 0) >= MIN_BRACKET_GAMES,
-			)
+		const values = sumResults(
+			(rows ?? [])
+				.filter((r) => rank.has(r.opening_family))
+				.map((r) => ({
+					...r,
+					band: band(r).label,
+					key: `${r.opening_family}|${band(r).label}`,
+					// The header filter snaps to whole ranges, so one bracket decides for the range.
+					inRange: inRange(band(r).lo),
+				})),
+			"key",
+		)
+			.filter((r) => (totals.get(r.band) ?? 0) >= MIN_BRACKET_GAMES)
 			.map((r) => ({
 				...r,
 				rank: rank.get(r.opening_family),
-				share: r.games / totals.get(r.elo_bracket)!,
-				inRange: inRange(r.elo_bracket),
-				bracket_label: bracketLabel(r.elo_bracket),
+				share: r.games / totals.get(r.band)!,
 			}));
 		return { ...popularitySpec, data: { values } } as VisualizationSpec;
-	}, [rows, all, inRange, popularityPicked, popularityOptions]);
-
-	// Clicking a row (label included) picks that opening for the chart below.
-	const onEmbed = useCallback(({ view }: Result) => {
-		viewRef.current = view;
-		view.signal("shown", shownRef.current ?? null).run();
-		view.addEventListener("click", (_, item) => {
-			const name = (item?.datum as { opening_family?: string } | undefined)
-				?.opening_family;
-			if (name) setPicked(name);
-		});
-	}, []);
+	}, [rows, all, inRange, selection, options]);
 
 	return (
 		<TabSection
 			title={`Which openings are good for ${side}?`}
-			description={`Each row is an opening family, ranked by white's score (draws as half a win), from best for white at the top to best for black at the bottom. The order stays the same whatever you pick above. Openings right of the dashed line do better for ${side} than the average game. Each bar is the 95% interval for ${side}'s ${halfDraws ? "score (a draw counts as half a win)" : "win rate (draws count as nothing)"}: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden. Click a row to see that opening by rating below.`}
+			description={`Each row is an opening family (${grouping === "eco" ? "by ECO code range; Others is every code outside the ten families" : "the opening name before the colon, 40 most played"}), ranked by white's wins minus black's, from best for white at the top to best for black at the bottom. The order stays the same whatever you pick above. Openings right of the dashed line do better for ${side} than the average game. Each bar is the 95% interval for ${side}'s win rate: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden.`}
 			controls={
 				<>
+					<SegmentedControl
+						data={[
+							{ value: "eco", label: "ECO families" },
+							{ value: "name", label: "Opening names" },
+						]}
+						value={grouping}
+						onChange={(v) => setGrouping(v as Grouping)}
+					/>
 					<SegmentedControl
 						data={[
 							{ value: "white", label: "White" },
@@ -534,62 +410,34 @@ export default function Openings() {
 						value={side}
 						onChange={(v) => setSide(v as Side)}
 					/>
-					<Checkbox
-						label="Count a draw as half a win"
-						checked={halfDraws}
-						onChange={(e) => setHalfDraws(e.currentTarget.checked)}
-					/>
 				</>
 			}
 			loading={!rows || !all}
 		>
-			<VegaEmbed
-				spec={fullSpec.spec}
-				onEmbed={onEmbed}
-				style={{ width: "100%" }}
+			<OpeningPicker
+				options={options}
+				value={selection}
+				onChange={(v) => setPicks((p) => ({ ...p, [grouping]: v }))}
 			/>
-			<Title order={4} mt="lg">
-				{shown}: white's score by rating
-			</Title>
-			<Text size="sm" c="dimmed" mb="xs">
-				Vertical bars are 95% intervals. Hover a point to compare with all games
-				in that bracket. Brackets with fewer than {MIN_GAMES} games of this
-				opening are left out.
-			</Text>
-			{/* Re-embedded when the opening changes; the min height keeps the page from jumping meanwhile. */}
-			<VegaEmbed
-				spec={detail}
-				style={{ width: "100%", minHeight: DETAIL_MIN_HEIGHT }}
-			/>
+			<VegaEmbed spec={fullSpec} style={{ width: "100%" }} />
 			<Title order={4} mt="lg">
 				Wins, draws and losses by opening
 			</Title>
 			<Text size="sm" c="dimmed" mb="xs">
-				By default the {COMPARED} most played openings in the Elo filter; pick
-				your own below. Best score for white on top. Only openings with at least{" "}
-				{MIN_GAMES} games in the Elo filter can be picked.
+				The openings picked above, in the same order as the ranking. Openings with
+				fewer than {MIN_GAMES} games in the Elo filter are hidden.
 			</Text>
-			<OpeningPicker
-				options={resultsOptions}
-				value={resultsPicked}
-				onChange={setResultsPicked}
-			/>
 			<VegaEmbed spec={results} style={{ width: "100%" }} />
 			<Title order={4} mt="lg">
 				Opening popularity by rating
 			</Title>
 			<Text size="sm" c="dimmed" mb="xs">
-				Each cell is the share of that bracket's games played with the opening,
-				so brackets of different sizes compare fairly. Read along a row to see
-				an opening rise or fall with rating. By default the {COMPARED} most
-				played openings overall; pick your own below. Brackets with fewer than{" "}
-				{MIN_BRACKET_GAMES} games are left out.
+				Each cell is the share of that Elo range's games played with the
+				opening, so ranges of different sizes compare fairly. Read along a row
+				to see an opening rise or fall with rating. Same openings as picked
+				above, most played on top. Ranges with fewer than {MIN_BRACKET_GAMES}{" "}
+				games are left out.
 			</Text>
-			<OpeningPicker
-				options={popularityOptions}
-				value={popularityPicked}
-				onChange={setPopularityPicked}
-			/>
 			<VegaEmbed spec={popularity} style={{ width: "100%" }} />
 		</TabSection>
 	);

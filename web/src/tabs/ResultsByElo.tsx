@@ -3,7 +3,7 @@ import { SegmentedControl } from '@mantine/core'
 import { VegaEmbed } from 'react-vega'
 import type { VisualizationSpec } from 'vega-embed'
 import { useData } from '../lib/data'
-import { DIMMED, RESULT_MARK, bracketLabel, bracketLabelExpr, resultColor, sumResults, toResultRows } from '../lib/chess'
+import { DIMMED, ELO_BANDS, RESULT_MARK, bandIndex, resultColor, sumResults, toResultRows } from '../lib/chess'
 import { useEloFilter } from '../lib/eloRange'
 import { TabSection } from '../lib/TabSection'
 
@@ -19,10 +19,11 @@ const spec: VisualizationSpec = {
   mark: RESULT_MARK,
   encoding: {
     x: {
-      field: 'elo_bracket',
+      field: 'band',
       type: 'ordinal',
+      sort: ELO_BANDS.map((b) => b.label),
       title: 'Average Elo of both players',
-      axis: { labelExpr: bracketLabelExpr('datum.value', false), labelAngle: 0 },
+      axis: { labelAngle: 0 },
     },
     y: { field: 'count', type: 'quantitative', stack: 'normalize', title: 'Share of games', axis: { format: '%' } },
     color: resultColor,
@@ -30,11 +31,11 @@ const spec: VisualizationSpec = {
     // The x axis is Elo itself, so brackets outside the global filter are dimmed, not removed.
     opacity: { condition: { test: 'datum.inRange', value: 1 }, value: DIMMED },
     tooltip: [
-      { field: 'bracket_label', title: 'Elo bracket' },
+      { field: 'band', title: 'Elo range' },
       { field: 'result', title: 'Result' },
       { field: 'share', title: 'Share', format: '.1%' },
       { field: 'count', title: 'Games', format: ',' },
-      { field: 'games', title: 'Games in bracket', format: ',' },
+      { field: 'games', title: 'Games in range', format: ',' },
     ],
   },
 }
@@ -46,11 +47,10 @@ export default function ResultsByElo() {
 
   const fullSpec = useMemo(() => {
     const filtered = (rows ?? []).filter((r) => timeClass === 'all' || r.time_class === timeClass)
-    const values = toResultRows(sumResults(filtered, 'elo_bracket')).map((r) => ({
-      ...r,
-      inRange: inRange(r.elo_bracket),
-      bracket_label: bracketLabel(r.elo_bracket),
-    }))
+    const banded = filtered.map((r) => ({ ...r, band: ELO_BANDS[bandIndex(r.elo_bracket)].label }))
+    // The Elo filter snaps to these same ranges, so a range is either wholly in or out.
+    const bandsInRange = new Set(banded.filter((r) => inRange(r.elo_bracket)).map((r) => r.band))
+    const values = toResultRows(sumResults(banded, 'band')).map((r) => ({ ...r, inRange: bandsInRange.has(r.band) }))
     return { ...spec, data: { values } } as VisualizationSpec
   }, [rows, timeClass, inRange])
 
@@ -60,7 +60,7 @@ export default function ResultsByElo() {
   return (
     <TabSection
       title="Who wins, by rating?"
-      description={`Share of white wins, draws and black wins for each Elo bracket. Hover a segment for counts.${range ? ' Brackets outside the Elo filter are dimmed.' : ''}`}
+      description={`Share of white wins, draws and black wins for each Elo range. Hover a segment for counts.${range ? ' Ranges outside the Elo filter are dimmed.' : ''}`}
       controls={
         present.length > 1 && (
           <SegmentedControl data={['all', ...present]} value={timeClass} onChange={setTimeClass} />
