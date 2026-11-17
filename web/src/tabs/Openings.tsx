@@ -27,6 +27,7 @@ import { useEloFilter } from "../lib/eloRange";
 import { TabSection } from "../lib/TabSection";
 
 type Row = {
+	group?: string; // ECO grouping only: "After e4 e5", "After d4", ...
 	opening_family: string;
 	elo_bracket: number;
 	games: number;
@@ -36,7 +37,8 @@ type Row = {
 };
 
 const ROW = 17; // px per opening; every opening gets a labeled row
-const LABEL_WIDTH = 140; // fits the longest opening name
+// Room for the opening names left of the ranking: the ECO family names are much longer.
+const LABEL_WIDTH = { eco: 300, name: 140 } as const;
 
 type Side = "white" | "black";
 const SIDE_NAME = { white: "White", black: "Black" } as const;
@@ -71,7 +73,7 @@ const rankingTooltip = (side: Side) => [
 
 // The ranking itself: rows sorted by whiteEdge in both views, so toggling the side keeps every
 // opening in its row. Best for white on top, best for black at the bottom.
-const y = {
+const rankingY = (labelWidth: number) => ({
 	field: "opening_family",
 	type: "nominal",
 	title: null,
@@ -81,14 +83,17 @@ const y = {
 		ticks: false,
 		domain: false,
 		labelPadding: 6,
-		labelLimit: LABEL_WIDTH - 6,
+		labelLimit: labelWidth - 6,
 	},
-} as const;
+} as const);
 
 const rankingSpec = (
 	side: Side,
+	labelWidth: number,
 	tooltip = rankingTooltip(side),
-): VisualizationSpec => ({
+): VisualizationSpec => {
+	const y = rankingY(labelWidth);
+	return {
 	$schema: "https://vega.github.io/schema/vega-lite/v6.json",
 	data: { name: "table" }, // placeholder, filled in below
 	width: "container",
@@ -100,7 +105,7 @@ const rankingSpec = (
 			mark: { type: "rect", color: "white", opacity: 0.001 },
 			encoding: {
 				y,
-				x: { value: -LABEL_WIDTH },
+				x: { value: -labelWidth },
 				x2: { value: "width" },
 				tooltip,
 			},
@@ -153,13 +158,16 @@ const rankingSpec = (
 			},
 		},
 	],
-});
+	};
+};
 
 const COMPARED = 15; // default pick with name families: this many most played openings
 const COMPARED_ROW = 24; // px per opening in the two comparison charts
 
-// Two ways to group openings: the group's ECO families (openings_by_eco.json, 10 families plus
-// Others) or the opening name before the ":" (openings_by_elo.json, the 40 most played).
+// Two ways to group openings: the group's ECO families (openings_by_eco.json, 19 families in 4
+// groups, from opening_groups_by_eco.csv at the repo root) or the opening name before the ":"
+// (openings_by_elo.json, the 40 most played). With ECO families the user picks a group first,
+// and every chart shows only that group's families.
 type Grouping = "eco" | "name";
 const GROUPING_FILE = { eco: "openings_by_eco.json", name: "openings_by_elo.json" } as const;
 
@@ -176,6 +184,7 @@ const resultsSpec: VisualizationSpec = {
 			type: "nominal",
 			title: null,
 			sort: { field: "edge", order: "descending" },
+			axis: { labelLimit: LABEL_WIDTH.eco },
 		},
 		x: {
 			field: "count",
@@ -216,6 +225,7 @@ const popularitySpec: VisualizationSpec = {
 			type: "nominal",
 			title: null,
 			sort: { field: "rank" },
+			axis: { labelLimit: LABEL_WIDTH.eco },
 		},
 		color: {
 			field: "share",
@@ -269,7 +279,7 @@ function OpeningPicker(props: {
 	);
 }
 
-/** The default pick: every ECO family, or the COMPARED most played name families. */
+/** The default pick: every family in the ECO group, or the COMPARED most played name families. */
 const defaultPick = (grouping: Grouping, options: string[]) =>
 	grouping === "eco" ? options : options.slice(0, COMPARED);
 
@@ -278,15 +288,35 @@ const ciLabel = (s: { lo: number; hi: number }) =>
 
 export default function Openings() {
 	const [grouping, setGrouping] = useState<Grouping>("eco");
-	const rows = useData<Row[]>(GROUPING_FILE[grouping]);
+	const fileRows = useData<Row[]>(GROUPING_FILE[grouping]);
 	const all = useData<Row[]>("results_by_elo.json");
 	const { inRange } = useEloFilter();
 	const [side, setSide] = useState<Side>("white");
-	// One pick per grouping, so switching back and forth keeps both. null = the default pick.
-	const [picks, setPicks] = useState<Record<Grouping, string[] | null>>({
-		eco: null,
-		name: null,
-	});
+
+	// ECO groups in file order (the CSV's), and the one picked; null = the first.
+	const groups = useMemo(
+		() =>
+			grouping === "eco"
+				? [...new Set((fileRows ?? []).map((r) => r.group!))]
+				: [],
+		[grouping, fileRows],
+	);
+	const [pickedGroup, setGroup] = useState<string | null>(null);
+	const group =
+		pickedGroup && groups.includes(pickedGroup) ? pickedGroup : groups[0];
+	// Every row the charts may show: the picked group's families, or all name families.
+	const rows = useMemo(
+		() =>
+			fileRows && grouping === "eco"
+				? fileRows.filter((r) => r.group === group)
+				: fileRows,
+		[fileRows, grouping, group],
+	);
+
+	// One pick per ECO group and one for name families, so switching back and forth keeps each.
+	// Missing = the default pick.
+	const pickKey = grouping === "eco" ? `eco:${group}` : "name";
+	const [picks, setPicks] = useState<Record<string, string[]>>({});
 
 	// Every opening in the data, most played overall first.
 	const options = useMemo(
@@ -297,9 +327,9 @@ export default function Openings() {
 		[rows],
 	);
 	const selection = useMemo(() => {
-		const kept = (picks[grouping] ?? []).filter((o) => options.includes(o));
+		const kept = (picks[pickKey] ?? []).filter((o) => options.includes(o));
 		return kept.length ? kept : defaultPick(grouping, options);
-	}, [picks, grouping, options]);
+	}, [picks, pickKey, grouping, options]);
 	const selected = useMemo(() => new Set(selection), [selection]);
 
 	const fullSpec = useMemo(() => {
@@ -333,11 +363,11 @@ export default function Openings() {
 		const avg = total ? winRate(total, side).score : null;
 		const mean = avg === null ? [] : [{ score: avg }];
 		return {
-			...rankingSpec(side),
+			...rankingSpec(side, LABEL_WIDTH[grouping]),
 			datasets: { mean },
 			data: { values },
 		} as VisualizationSpec;
-	}, [rows, all, inRange, side, selected]);
+	}, [rows, all, inRange, side, selected, grouping]);
 
 	// The picked openings with enough games in the Elo filter.
 	const results = useMemo(() => {
@@ -391,7 +421,7 @@ export default function Openings() {
 	return (
 		<TabSection
 			title={`Which openings are good for ${side}?`}
-			description={`Each row is an opening family (${grouping === "eco" ? "by ECO code range; Others is every code outside the ten families" : "the opening name before the colon, 40 most played"}), ranked by white's wins minus black's, from best for white at the top to best for black at the bottom. The order stays the same whatever you pick above. Openings right of the dashed line do better for ${side} than the average game. Each bar is the 95% interval for ${side}'s win rate: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden.`}
+			description={`Each row is an opening family (${grouping === "eco" ? "by ECO code range, in the group picked below" : "the opening name before the colon, 40 most played"}), ranked by white's wins minus black's, from best for white at the top to best for black at the bottom. The order stays the same whatever you pick above. Openings right of the dashed line do better for ${side} than the average game. Each bar is the 95% interval for ${side}'s win rate: an opening whose bar crosses the line isn't clearly different from average, and a wide bar means few games (hover for the count). Openings with fewer than ${MIN_GAMES} games in the Elo filter are hidden.`}
 			controls={
 				<>
 					<SegmentedControl
@@ -414,10 +444,19 @@ export default function Openings() {
 			}
 			loading={!rows || !all}
 		>
+			{grouping === "eco" && (
+				<SegmentedControl
+					data={groups}
+					value={group}
+					onChange={setGroup}
+					fullWidth
+					mb="sm"
+				/>
+			)}
 			<OpeningPicker
 				options={options}
 				value={selection}
-				onChange={(v) => setPicks((p) => ({ ...p, [grouping]: v }))}
+				onChange={(v) => setPicks((p) => ({ ...p, [pickKey]: v }))}
 			/>
 			<VegaEmbed spec={fullSpec} style={{ width: "100%" }} />
 			<Title order={4} mt="lg">

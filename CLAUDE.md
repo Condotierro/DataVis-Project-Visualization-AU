@@ -53,6 +53,7 @@ There are no tests.
 - Sampling goes in `keep_game()`. Two teammates own the sampling strategy (stratified, by Elo, and so on), so keep that hook intact.
 - Time class is computed from `TimeControl` with Lichess's rule (estimated duration = base + 40 × increment). It is not taken from `Event`, because Swiss and arena events break that header.
 - `aggregate.py` has one function per output JSON file and uses polars lazy frames. It derives `elo_bracket` (average of both players, 200-wide bins clipped to 600–2800) and `opening_family` (the opening name before the `:`).
+- The Openings tab's ECO grouping (4 groups, 19 families) is read from `opening_groups_by_eco.csv` at the repo root, which a teammate maintains. Change groups or ECO ranges there, not in code, then rerun `aggregate.py`.
 - Board-square stats come straight from the move notation. The destination square is the last square in the move token, and castling is mapped to the king's target square. No board replay is needed.
 
 **Web**

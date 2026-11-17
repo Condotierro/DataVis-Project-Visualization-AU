@@ -28,20 +28,27 @@ TOP_OPENINGS = 40  # enough points for the openings scatterplot
 BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap and in game endings
 MOVES_BIN = 5  # game length bin width, in full moves
 
-# The opening families the group settled on, by ECO range (both ends inclusive). Every other
-# code, A00 included, goes to "Others". The Openings tab can switch to these from name families.
-ECO_FAMILIES = [
-    ("Sicilian", "B20", "B99"),
-    ("Caro-Kann", "B10", "B19"),
-    ("French", "C00", "C19"),
-    ("Italian", "C50", "C59"),
-    ("Spanish (Ruy Lopez)", "C60", "C99"),
-    ("Queen's Gambit", "D06", "D69"),
-    ("Queen's Indian", "E12", "E19"),
-    ("King's Indian", "E60", "E99"),
-    ("English", "A10", "A39"),
-    ("Dutch", "A80", "A99"),
-]
+# The ECO groups and families the group settled on, read from the CSV at the repo root (Baran's,
+# kept as the single source of truth: don't edit the ranges here). Each family has one or more
+# ECO ranges, both ends inclusive; together they cover A00-E99 with no overlap.
+ECO_GROUPS_CSV = Path(__file__).resolve().parent.parent / "opening_groups_by_eco.csv"
+
+
+def read_eco_families(path: Path = ECO_GROUPS_CSV) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """(group, family, [(lo, hi), ...]) per CSV row, in CSV order, skipping the TOTAL row."""
+    families = []
+    for row in pl.read_csv(path).iter_rows(named=True):
+        if not row["Group"]:
+            continue
+        ranges = []
+        for part in row["ECO Codes"].split(","):
+            lo, _, hi = part.strip().partition("-")
+            ranges.append((lo, hi or lo))
+        families.append((row["Group"], row["Opening Family"], ranges))
+    return families
+
+
+ECO_FAMILIES = read_eco_families()
 
 
 def read_sample_csv(path: Path) -> pl.DataFrame:
@@ -121,21 +128,26 @@ def openings_by_elo(games: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def eco_family() -> pl.Expr:
-    (name, lo, hi), *rest = ECO_FAMILIES
-    expr = pl.when(pl.col("eco").is_between(pl.lit(lo), pl.lit(hi))).then(pl.lit(name))
-    for name, lo, hi in rest:
-        expr = expr.when(pl.col("eco").is_between(pl.lit(lo), pl.lit(hi))).then(pl.lit(name))
-    return expr.otherwise(pl.lit("Others"))
+def eco_family(column: int) -> pl.Expr:
+    """The ECO_FAMILIES entry at `column` (0 = group, 1 = family) for each game's ECO code."""
+    in_ranges = lambda ranges: pl.any_horizontal(pl.col("eco").is_between(pl.lit(lo), pl.lit(hi)) for lo, hi in ranges)
+    return pl.coalesce(pl.when(in_ranges(entry[2])).then(pl.lit(entry[column])) for entry in ECO_FAMILIES)
 
 
 def openings_by_eco(games: pl.LazyFrame) -> pl.DataFrame:
-    """Like openings_by_elo, but grouped into ECO_FAMILIES (named opening_family so the app reads both alike)."""
+    """Like openings_by_elo, but grouped into ECO_FAMILIES (named opening_family so the app reads
+    both alike), plus each family's group. Games without a valid ECO code are dropped."""
+    unmatched = games.filter(eco_family(1).is_null()).select(pl.len()).collect().item()
+    if unmatched:
+        print(f"openings_by_eco: {unmatched:,} games have no ECO code in {ECO_GROUPS_CSV.name}, dropped")
+    order = {family: i for i, (_, family, _) in enumerate(ECO_FAMILIES)}
     return (
-        games.with_columns(opening_family=eco_family())
-        .group_by("opening_family", "elo_bracket")
+        games.with_columns(group=eco_family(0), opening_family=eco_family(1))
+        .drop_nulls("opening_family")
+        .group_by("group", "opening_family", "elo_bracket")
         .agg(result_counts())
-        .sort("opening_family", "elo_bracket")
+        # CSV order (the app lists groups and families in the order they first appear)
+        .sort(pl.col("opening_family").replace_strict(order, return_dtype=pl.Int32), "elo_bracket")
         .collect()
     )
 
