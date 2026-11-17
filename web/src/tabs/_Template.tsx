@@ -3,6 +3,7 @@ import { VegaEmbed } from 'react-vega'
 import type { VisualizationSpec } from 'vega-embed'
 import { useData } from '../lib/data'
 import { TabSection } from '../lib/TabSection'
+import { VEGA_OPTIONS } from '../lib/theme'
 
 // Copy this file to start a new visualization, then register it in ./index.ts.
 // Not registered itself, so it doesn't show up in the app.
@@ -31,7 +32,7 @@ export default function Template() {
 
   return (
     <TabSection title="My new visualization" description="What question does this chart answer?" loading={!rows}>
-      <VegaEmbed spec={fullSpec} style={{ width: '100%' }} />
+      <VegaEmbed spec={fullSpec} options={VEGA_OPTIONS} style={{ width: '100%' }} />
     </TabSection>
   )
 }

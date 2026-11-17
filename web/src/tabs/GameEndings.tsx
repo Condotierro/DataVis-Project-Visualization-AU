@@ -7,6 +7,7 @@ import { useData } from '../lib/data'
 import { ACCENT, CONTEXT, DIMMED, INK, MIN_BRACKET_GAMES, MIN_GAMES, RESULT_MARK, bracketLabelExpr } from '../lib/chess'
 import { useEloFilter } from '../lib/eloRange'
 import { TabSection } from '../lib/TabSection'
+import { VEGA_OPTIONS } from '../lib/theme'
 
 type Row = { elo_bracket: number; opening: string; moves: number; ending: string; games: number }
 type Picks = { bracket: number | null; opening: string | null }
@@ -18,7 +19,7 @@ const ending = {
   field: 'ending',
   type: 'nominal',
   title: null,
-  scale: { domain: ENDINGS, range: [INK, '#9a978e', CONTEXT, ACCENT] },
+  scale: { domain: ENDINGS, range: [INK, '#8b8780', CONTEXT, ACCENT] },
   legend: { orient: 'top' },
 } as const
 const endingOrder = { calculate: `indexof(${JSON.stringify(ENDINGS)}, datum.ending)`, as: 'order' }
@@ -269,7 +270,7 @@ export default function GameEndings() {
       loading={!rows}
     >
       <div ref={ref}>
-        {container > 0 && <VegaEmbed spec={fullSpec} onEmbed={onEmbed} style={{ width: '100%' }} />}
+        {container > 0 && <VegaEmbed spec={fullSpec} onEmbed={onEmbed} options={VEGA_OPTIONS} style={{ width: '100%' }} />}
       </div>
       {/* Under the length chart, the only one it changes. It can't sit between the panels: they
           are one Vega spec, so that clicks in one filter the others. */}

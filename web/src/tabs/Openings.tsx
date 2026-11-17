@@ -25,6 +25,7 @@ import {
 import { useData } from "../lib/data";
 import { useEloFilter } from "../lib/eloRange";
 import { TabSection } from "../lib/TabSection";
+import { PANEL, VEGA_OPTIONS } from "../lib/theme";
 
 type Row = {
 	group?: string; // ECO grouping only: "After e4 e5", "After d4", ...
@@ -79,7 +80,6 @@ const rankingY = (labelWidth: number) => ({
 	title: null,
 	sort: { field: "edge", order: "descending" },
 	axis: {
-		labelColor: "#4a4944",
 		ticks: false,
 		domain: false,
 		labelPadding: 6,
@@ -211,7 +211,7 @@ const popularitySpec: VisualizationSpec = {
 	data: { name: "table" }, // placeholder, filled in below
 	width: "container",
 	height: { step: COMPARED_ROW }, // grows with the number of openings picked
-	mark: { type: "rect", stroke: "white", strokeWidth: 1 },
+	mark: { type: "rect", stroke: PANEL, strokeWidth: 1 },
 	encoding: {
 		x: {
 			field: "band",
@@ -231,7 +231,7 @@ const popularitySpec: VisualizationSpec = {
 			field: "share",
 			type: "quantitative",
 			title: "Share of games",
-			scale: { type: "sqrt", range: ["#eef3fa", ACCENT] },
+			scale: { type: "sqrt", range: ["#3a3733", ACCENT] },
 			legend: { format: ".0%", orient: "top" },
 		},
 		opacity: { condition: { test: "datum.inRange", value: 1 }, value: DIMMED },
@@ -458,7 +458,7 @@ export default function Openings() {
 				value={selection}
 				onChange={(v) => setPicks((p) => ({ ...p, [pickKey]: v }))}
 			/>
-			<VegaEmbed spec={fullSpec} style={{ width: "100%" }} />
+			<VegaEmbed spec={fullSpec} options={VEGA_OPTIONS} style={{ width: "100%" }} />
 			<Title order={4} mt="lg">
 				Wins, draws and losses by opening
 			</Title>
@@ -466,7 +466,7 @@ export default function Openings() {
 				The openings picked above, in the same order as the ranking. Openings with
 				fewer than {MIN_GAMES} games in the Elo filter are hidden.
 			</Text>
-			<VegaEmbed spec={results} style={{ width: "100%" }} />
+			<VegaEmbed spec={results} options={VEGA_OPTIONS} style={{ width: "100%" }} />
 			<Title order={4} mt="lg">
 				Opening popularity by rating
 			</Title>
@@ -477,7 +477,7 @@ export default function Openings() {
 				above, most played on top. Ranges with fewer than {MIN_BRACKET_GAMES}{" "}
 				games are left out.
 			</Text>
-			<VegaEmbed spec={popularity} style={{ width: "100%" }} />
+			<VegaEmbed spec={popularity} options={VEGA_OPTIONS} style={{ width: "100%" }} />
 		</TabSection>
 	);
 }

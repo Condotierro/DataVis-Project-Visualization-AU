@@ -6,6 +6,7 @@ import { useData } from '../lib/data'
 import { DIMMED, ELO_BANDS, RESULT_MARK, bandIndex, resultColor, sumResults, toResultRows } from '../lib/chess'
 import { useEloFilter } from '../lib/eloRange'
 import { TabSection } from '../lib/TabSection'
+import { VEGA_OPTIONS } from '../lib/theme'
 
 type Row = { elo_bracket: number; time_class: string; games: number; white: number; draw: number; black: number }
 
@@ -68,7 +69,7 @@ export default function ResultsByElo() {
       }
       loading={!rows}
     >
-      <VegaEmbed spec={fullSpec} style={{ width: '100%' }} />
+      <VegaEmbed spec={fullSpec} options={VEGA_OPTIONS} style={{ width: '100%' }} />
     </TabSection>
   )
 }

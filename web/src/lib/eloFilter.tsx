@@ -6,6 +6,7 @@ import type { Result, VisualizationSpec } from 'vega-embed'
 import { useData } from './data'
 import { CONTEXT, ELO_BANDS, INK, bandIndex, sumResults } from './chess'
 import { EloContext, type Range } from './eloRange'
+import { PANEL, VEGA_OPTIONS } from './theme'
 
 // The global Elo filter: a brushable histogram of games per Elo range (ELO_BANDS), and the provider
 // that shares the picked range with every tab (read it with useEloFilter()).
@@ -32,7 +33,7 @@ const spec: VisualizationSpec = {
   transform: [{ calculate: 'datum.band + 1', as: 'end' }],
   // One equal-width bar per range: the ranges differ in Elo width, so on a true Elo axis bar area
   // wouldn't match game counts. The axis is the range index, quantitative so the brush drags freely.
-  mark: { type: 'bar', stroke: 'white', strokeWidth: 1, cursor: 'col-resize' },
+  mark: { type: 'bar', stroke: PANEL, strokeWidth: 1, cursor: 'col-resize' },
   encoding: {
     x: {
       field: 'band',
@@ -43,6 +44,7 @@ const spec: VisualizationSpec = {
         values: ELO_BANDS.map((_, i) => i + 0.5),
         labelExpr: `${JSON.stringify(ELO_BANDS.map((b) => b.label))}[floor(datum.value)]`,
         ticks: false,
+        grid: false,
       },
     },
     x2: { field: 'end' },
@@ -56,7 +58,6 @@ const spec: VisualizationSpec = {
         labelExpr: "datum.value ? format(datum.value / 1000, '~d') + 'k' : '0'",
         domain: false,
         ticks: false,
-        gridColor: '#eceae4',
       },
     },
     y2: { datum: 0 }, // with x2 set, bars need an explicit base
@@ -74,7 +75,6 @@ const spec: VisualizationSpec = {
       { field: 'games', title: 'Games', format: ',' },
     ],
   },
-  config: { view: { stroke: null } },
 }
 
 /** Snap a dragged interval to the ranges whose middle it covers, as 200-wide bracket starts. */
@@ -134,13 +134,12 @@ export function EloBrush() {
   const pickedGames = picked.reduce((n, r) => n + r.games, 0)
 
   return (
-    <Paper withBorder p="sm" mb="lg">
+    <Paper p="md" mb="lg">
       <Group justify="space-between" align="baseline" mb={4}>
         <Text size="sm" fw={600}>
           {rangeLabel(range)}
           <Text span c="dimmed" fw={400}>
-            {' '}
-            · {pickedGames.toLocaleString()} games ({total ? ((pickedGames / total) * 100).toFixed(0) : 0}%)
+            , {pickedGames.toLocaleString()} games ({total ? ((pickedGames / total) * 100).toFixed(0) : 0}% of all)
           </Text>
         </Text>
         <Group gap="xs">
@@ -168,4 +167,4 @@ export function EloBrush() {
   )
 }
 
-const EMBED_OPTIONS = { actions: false }
+const EMBED_OPTIONS = { ...VEGA_OPTIONS, actions: false }
