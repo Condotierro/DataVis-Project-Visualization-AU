@@ -23,7 +23,6 @@ const ending = {
   legend: { orient: 'top' },
 } as const
 const endingOrder = { calculate: `indexof(${JSON.stringify(ENDINGS)}, datum.ending)`, as: 'order' }
-const OTHER = 'Other openings'
 
 // Game length, in 5-move bins. The axis ends where the games do: past the last bin, at most
 // TAIL of all games are left (a handful of very long games, up to ~185 moves, too few to see
@@ -60,10 +59,10 @@ const shareX = { field: 'games', type: 'quantitative', stack: 'normalize', title
 // Vega-Lite's width: 'container' doesn't work in a concat, so panel widths are pixels measured
 // from the page: the container minus what the axes, labels and gaps between panels take.
 const BRACKET_AXIS = 75 // y axis of the rating panel (labels + title)
-const OPENING_AXIS = 150 // y axis of the opening panel (opening names)
+const OPENING_AXIS = 310 // y axis of the opening panel (the ECO family names are long)
 const LENGTH_AXIS = 70 // y axis of the length panel
 const PANEL_GAP = 20 // Vega-Lite's default concat spacing
-const SIDE_BY_SIDE = 720 // below this container width, the two top panels are stacked
+const SIDE_BY_SIDE = 860 // below this container width, the two top panels are stacked
 
 function panelWidths(container: number) {
   const sideBySide = container >= SIDE_BY_SIDE
@@ -146,8 +145,15 @@ const makeSpec = (normalize: boolean, openings: string[], picks: Picks, containe
             transform: [{ filter: { param: 'pickBracket', empty: true } }, ...sharesBy('opening')],
             mark: { ...RESULT_MARK, cursor: 'pointer' },
             encoding: {
-              // A fixed order, so the rows don't jump around when a bracket is picked.
-              y: { field: 'opening', type: 'nominal', title: null, scale: { domain: openings } },
+              // A fixed order (the CSV's, so each group's families sit together), so the rows
+              // don't jump around when a bracket is picked.
+              y: {
+                field: 'opening',
+                type: 'nominal',
+                title: null,
+                scale: { domain: openings },
+                axis: { labelLimit: OPENING_AXIS - 10 },
+              },
               x: shareX,
               color: ending,
               order: { field: 'order' },
@@ -233,13 +239,8 @@ export default function GameEndings() {
   const cut = useMemo(() => lengthCut(rows ?? []), [rows])
 
   const fullSpec = useMemo(() => {
-    const totals = new Map<string, number>()
-    for (const r of rows ?? []) totals.set(r.opening, (totals.get(r.opening) ?? 0) + r.games)
-    const openings = [...totals]
-      .filter(([name]) => name !== OTHER)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name]) => name)
-    if (totals.has(OTHER)) openings.push(OTHER)
+    // The ECO families, in file order: the CSV's, grouped by first move.
+    const openings = [...new Set((rows ?? []).map((r) => r.opening))]
 
     // Read on purpose without a dependency: a click must not cause a re-embed by itself.
     /* oxlint-disable react/refs */
@@ -266,7 +267,7 @@ export default function GameEndings() {
   return (
     <TabSection
       title="How do games end?"
-      description={`In 3-minute games many are decided by the clock, not the board. A decisive game that ends without mate or a flag counts as a resignation. Click a rating or an opening to filter the other charts; click it again, or empty space in that chart, to reset it. Groups with fewer than ${MIN_BRACKET_GAMES} games are left out of the top charts, and lengths with fewer than ${MIN_GAMES} from the share view. The length chart stops at ${cut.last + MOVES_BIN - 1} moves; the ${cut.hidden.toLocaleString('en')} longer games (under ${TAIL * 100}% of all) are too few to show.`}
+      description={`In 3-minute games many are decided by the clock, not the board. A decisive game that ends without mate or a flag counts as a resignation. Openings are the group's 19 ECO families, listed by group (after e4 e5, other replies to e4, after d4, irregulars). Click a rating or an opening to filter the other charts; click it again, or empty space in that chart, to reset it. Groups with fewer than ${MIN_BRACKET_GAMES} games are left out of the top charts, and lengths with fewer than ${MIN_GAMES} from the share view. The length chart stops at ${cut.last + MOVES_BIN - 1} moves; the ${cut.hidden.toLocaleString('en')} longer games (under ${TAIL * 100}% of all) are too few to show.`}
       loading={!rows}
     >
       <div ref={ref}>

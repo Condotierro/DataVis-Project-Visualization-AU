@@ -25,7 +25,6 @@ from openings import opening_name
 
 ELO_BIN = 200
 TOP_OPENINGS = 40  # enough points for the openings scatterplot
-BOARD_OPENINGS = 10  # openings that can be picked on the board heatmap and in game endings
 MOVES_BIN = 5  # game length bin width, in full moves
 
 # The ECO groups and families the group settled on, read from the CSV at the repo root (Baran's,
@@ -49,6 +48,7 @@ def read_eco_families(path: Path = ECO_GROUPS_CSV) -> list[tuple[str, str, list[
 
 
 ECO_FAMILIES = read_eco_families()
+ECO_ORDER = {family: i for i, (_, family, _) in enumerate(ECO_FAMILIES)}
 
 
 def read_sample_csv(path: Path) -> pl.DataFrame:
@@ -94,6 +94,11 @@ def with_common_columns(games: pl.LazyFrame) -> pl.LazyFrame:
         elo_bracket=(avg_elo // ELO_BIN * ELO_BIN).clip(600, 2800),
         # "Sicilian Defense: Najdorf Variation, English Attack" -> "Sicilian Defense"
         opening_family=pl.col("opening").str.split(":").list.first().str.strip_chars(),
+        # The group's ECO grouping (ECO_FAMILIES); null for a game without a valid ECO code.
+        eco_group=eco_family(0),
+        eco_family=eco_family(1),
+        # Sorts families in CSV order, which keeps each group's families together.
+        eco_order=eco_family(1).replace_strict(ECO_ORDER, default=None, return_dtype=pl.Int32),
         white_win=pl.col("result") == "1-0",
         draw=pl.col("result") == "1/2-1/2",
         black_win=pl.col("result") == "0-1",
@@ -137,17 +142,17 @@ def eco_family(column: int) -> pl.Expr:
 def openings_by_eco(games: pl.LazyFrame) -> pl.DataFrame:
     """Like openings_by_elo, but grouped into ECO_FAMILIES (named opening_family so the app reads
     both alike), plus each family's group. Games without a valid ECO code are dropped."""
-    unmatched = games.filter(eco_family(1).is_null()).select(pl.len()).collect().item()
+    unmatched = games.filter(pl.col("eco_family").is_null()).select(pl.len()).collect().item()
     if unmatched:
-        print(f"openings_by_eco: {unmatched:,} games have no ECO code in {ECO_GROUPS_CSV.name}, dropped")
-    order = {family: i for i, (_, family, _) in enumerate(ECO_FAMILIES)}
+        print(f"{unmatched:,} games have no ECO code in {ECO_GROUPS_CSV.name}, left out of the ECO views")
     return (
-        games.with_columns(group=eco_family(0), opening_family=eco_family(1))
+        games.drop("opening_family")
+        .rename({"eco_group": "group", "eco_family": "opening_family"})
         .drop_nulls("opening_family")
-        .group_by("group", "opening_family", "elo_bracket")
+        .group_by("eco_order", "group", "opening_family", "elo_bracket")
         .agg(result_counts())
-        # CSV order (the app lists groups and families in the order they first appear)
-        .sort(pl.col("opening_family").replace_strict(order, return_dtype=pl.Int32), "elo_bracket")
+        .sort("eco_order", "elo_bracket")
+        .drop("eco_order")
         .collect()
     )
 
@@ -155,22 +160,20 @@ def openings_by_eco(games: pl.LazyFrame) -> pl.DataFrame:
 def game_endings(games: pl.LazyFrame) -> pl.DataFrame:
     """How games end, by game length, Elo bracket and opening.
 
-    Openings outside the top BOARD_OPENINGS are pooled, so each view's totals stay complete.
+    The opening is the ECO family (ECO_FAMILIES), which covers every code, so each view's totals
+    stay complete. Rows come in CSV order, which the app keeps for the opening panel.
 
     The dump's "Normal" termination covers mates, resignations and draws, so they are
     told apart here: a decisive game that doesn't end on "#" was resigned.
     """
     full_moves = (pl.col("num_plies") + 1) // 2
-    top = top_openings(games, BOARD_OPENINGS).collect()["opening_family"].to_list()
     return (
         # Dropped: the full dump's few aborted or rule-breaking games ("Abandoned", ...).
         games.filter(pl.col("termination").is_in(["Normal", "Time forfeit", "Insufficient material"]))
         .with_columns(
             # Not capped: the app's axis ends at the longest game, so no open "100+" bin.
             moves_bin=full_moves // MOVES_BIN * MOVES_BIN,
-            opening=pl.when(pl.col("opening_family").is_in(top))
-            .then(pl.col("opening_family"))
-            .otherwise(pl.lit("Other openings")),
+            opening=pl.col("eco_family"),
             # Lichess's "Insufficient material" termination is a flag fall against a
             # side that can't mate (scored a draw), so it's a time forfeit too.
             ending=pl.when(pl.col("termination") != "Normal")
@@ -181,10 +184,12 @@ def game_endings(games: pl.LazyFrame) -> pl.DataFrame:
             .then(pl.lit("Checkmate"))
             .otherwise(pl.lit("Resignation")),
         )
-        .group_by("elo_bracket", "opening", "moves_bin", "ending")
+        .drop_nulls("opening")
+        .group_by("eco_order", "elo_bracket", "opening", "moves_bin", "ending")
         .agg(games=pl.len())
         .rename({"moves_bin": "moves"})
-        .sort("elo_bracket", "opening", "moves", "ending")
+        .sort("eco_order", "elo_bracket", "moves", "ending")
+        .drop("eco_order")
         .collect()
     )
 
@@ -248,11 +253,12 @@ def square_rows(counts: pl.DataFrame, key: list[str]) -> pl.DataFrame:
 def square_heatmap(games: pl.LazyFrame, by: str | None = None) -> pl.DataFrame:
     """Destination square of every move, split by side, piece and Elo bracket.
 
-    With `by`, that column is one more key (e.g. opening_family, for games already
-    narrowed to the top openings).
+    With `by`, that column is one more key (e.g. eco_family; games where it is null are dropped).
     """
     extra = [by] if by else []
     key = [*extra, "side", "piece", "elo_bracket"]
+    if by:
+        games = games.drop_nulls(by)
     counts = parsed_moves(games, *extra).group_by(*key, "square").agg(count=pl.len()).collect()
     return square_rows(counts, key)
 
@@ -318,7 +324,7 @@ def main() -> None:
     write_json(square_heatmap(games), args.out / "square_heatmap.json")
     # The board for single openings, picked in the app; "All openings" uses the file above.
     write_json(
-        square_heatmap(games.join(top_openings(games, BOARD_OPENINGS), on="opening_family"), by="opening_family"),
+        square_heatmap(games, by="eco_family").rename({"eco_family": "opening_family"}),
         args.out / "square_heatmap_openings.json",
     )
     write_json(square_events(games), args.out / "square_events.json")
@@ -330,8 +336,12 @@ def main() -> None:
         last_date=pl.col("utc_date").max(),
         time_controls=pl.col("time_control").unique().sort().implode(),
     ).collect()
-    # The app lists these before (and without) loading square_heatmap_openings.json.
-    board_openings = top_openings(games, BOARD_OPENINGS).collect()["opening_family"].to_list()
+    # The app lists these before (and without) loading square_heatmap_openings.json:
+    # [{"group": "After e4 e5", "items": ["Italian Game", ...]}, ...], in CSV order.
+    eco_groups: dict[str, list[str]] = {}
+    for group, family, _ in ECO_FAMILIES:
+        eco_groups.setdefault(group, []).append(family)
+    board_openings = [{"group": g, "items": items} for g, items in eco_groups.items()]
     (args.out / "meta.json").write_text(json.dumps({**meta.to_dicts()[0], "board_openings": board_openings}))
     print(f"wrote {args.out / 'meta.json'}")
 

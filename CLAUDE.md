@@ -21,7 +21,7 @@ dataset/*.pgn.zst  (raw Lichess dump, ~30 GB, gitignored)
 
 The app currently runs on `New_Sampling.zip` at the repo root, which is the group's sample: 100k rated 3+0 blitz games spread over all of September, as a CSV, with no game where the two ratings differ by more than 100. The older `Sampling_100k.zip` (no gap limit) is still in the repo. `aggregate.py` reads it directly, zipped or not, so the extract step is skipped. The CSV has no `Opening` header, so `preprocessing/openings.py` names each opening from its moves. It uses Lichess's own opening table (`preprocessing/openings/*.tsv`, CC0) and matches by position, as Lichess does. On games that do have the header it agrees on 98.6% of exact names and 99.7% of families.
 
-The JSON in `web/public/data/` is committed on purpose. CI builds the site from it and never sees the raw dump. After changing `aggregate.py`, rerun it and commit the regenerated JSON. Keep these files small, in the tens of KB. The exception is the board tab's two bigger files, fetched only when needed: `square_heatmap_openings.json` (~360 KB, ~90 KB gzipped), after the user picks an opening, and `square_events.json` (~100 KB), after they pick captures, checks or checkmates. `game_endings.json` (~475 KB, ~25 KB gzipped) is also larger, because its charts cross-filter in the browser, so it holds every rating, opening and length combination.
+The JSON in `web/public/data/` is committed on purpose. CI builds the site from it and never sees the raw dump. After changing `aggregate.py`, rerun it and commit the regenerated JSON. Keep these files small, in the tens of KB. The exception is the board tab's two bigger files, fetched only when needed: `square_heatmap_openings.json` (~700 KB, ~165 KB gzipped, one board per ECO family), after the user picks an opening, and `square_events.json` (~100 KB), after they pick captures, checks or checkmates. `game_endings.json` (~830 KB, ~40 KB gzipped) is also larger, because its charts cross-filter in the browser, so it holds every rating, opening and length combination.
 
 `data/raw/dev_sample_100k.pgn.zst` holds the first 100k games of the dump, all from Sept 1. Use it for fast iteration.
 
@@ -53,7 +53,7 @@ There are no tests.
 - Sampling goes in `keep_game()`. Two teammates own the sampling strategy (stratified, by Elo, and so on), so keep that hook intact.
 - Time class is computed from `TimeControl` with Lichess's rule (estimated duration = base + 40 × increment). It is not taken from `Event`, because Swiss and arena events break that header.
 - `aggregate.py` has one function per output JSON file and uses polars lazy frames. It derives `elo_bracket` (average of both players, 200-wide bins clipped to 600–2800) and `opening_family` (the opening name before the `:`).
-- The Openings tab's ECO grouping (4 groups, 19 families) is read from `opening_groups_by_eco.csv` at the repo root, which a teammate maintains. Change groups or ECO ranges there, not in code, then rerun `aggregate.py`.
+- The ECO grouping (4 groups, 19 families), used by the Openings, Board heatmap and How games end tabs, is read from `opening_groups_by_eco.csv` at the repo root, which a teammate maintains. Change groups or ECO ranges there, not in code, then rerun `aggregate.py`.
 - Board-square stats come straight from the move notation. The destination square is the last square in the move token, and castling is mapped to the king's target square. No board replay is needed.
 
 **Web**

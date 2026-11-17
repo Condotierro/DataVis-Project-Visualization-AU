@@ -19,7 +19,8 @@ type Row = {
   opening_family?: string
   metric?: string
 }
-type Meta = { board_openings: string[] }
+// The ECO families, under their group ("After e4 e5", ...), as Mantine's grouped Select data.
+type Meta = { board_openings: { group: string; items: string[] }[] }
 
 // Same order as SQUARES in preprocessing/aggregate.py: a1, b1, ..., h1, a2, ..., h8
 const SQUARES = [...'12345678'].flatMap((rank) => [...'abcdefgh'].map((file) => file + rank))
@@ -130,7 +131,9 @@ export default function BoardHeatmap() {
             onChange={(v) => setOpening(v ?? 'all')}
             allowDeselect={false}
             disabled={metric !== 'moves'}
-            w={220}
+            searchable
+            w={300}
+            comboboxProps={{ width: 380, position: 'bottom-start' }}
           />
           <Select data={PIECES} value={piece} onChange={(v) => setPiece(v ?? 'all')} allowDeselect={false} w={160} />
         </>
